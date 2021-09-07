@@ -663,15 +663,12 @@ class maint:
         if cache_ratio < Decimal('70.0'):
             marker = MARK_WARN
             msg = "low cache hit ratio: %.2f (blocks hit vs blocks read)" % cache_ratio
-            html = "<tr><td width=\"5%\"><font color=\"red\">&#10004;</font></td><td width=\"20%\"><font color=\"red\">Cache Hit Ratio</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         elif cache_ratio < Decimal('90.0'):
             marker = MARK_WARN        
             msg = "Moderate cache hit ratio: %.2f (blocks hit vs blocks read)" % cache_ratio
-            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"red\">Cache Hit Ratio</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         else:
             marker = MARK_OK
             msg = "High cache hit ratio: %.2f (blocks hit vs blocks read)" % cache_ratio
-            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"blue\">Cache Hit Ratio</font></td><td width=\"75%\"><font color=\"blue\">" + msg + "</font></td></tr>"
         print (marker+msg)
 
         ##########################
@@ -680,11 +677,9 @@ class maint:
         if 'pg_stat_statements' not in self.shared_preload_libraries:
             marker = MARK_WARN
             msg = "pg_stat_statements extension not loaded."
-            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"red\">Shared Preload Libraries</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         else:
             marker = MARK_OK
             msg = "pg_stat_statements loaded"
-            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"blue\">Shared Preload Libraries</font></td><td width=\"75%\"><font color=\"blue\">" + msg + "</font></td></tr>"        
         print (marker+msg)
 
 
@@ -729,8 +724,8 @@ class maint:
             sql2 = "select datname, usename, application_name from pg_stat_activity where current_query ilike \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
         else:
             # select substring(query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start, state  from pg_stat_activity;
-            sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
-            sql2 = "select 'db=' || datname || '  user=' || usename || '  app=' || application_name || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+            sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || application_name || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
         cmd = "psql %s -t -c \"%s\"" % (self.connstring, sql1)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
@@ -751,7 +746,7 @@ class maint:
             rc, results2 = self.executecmd(cmd, False)
             if rc != SUCCESS:
                 print ("Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2))
-            subject = '%d %s Idle In Trans SQL(s) Detecter longer than %d minutes' % (idle_in_transaction_cnt, self.environment, self.idleintransmins)            
+            subject = '%d %s Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.environment, self.idleintransmins)            
             rc = self.send_mail(self.to, self.from_, subject, results2)
             if rc != 0:
                 printit("mail error")
@@ -1314,5 +1309,4 @@ if rc < SUCCESS:
 pg.cleanup()
 
 sys.exit(0)
-
 
