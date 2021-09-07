@@ -56,7 +56,7 @@
 #    View cron job output: view /var/log/cron
 #    source the database environment: source ~/db_catalog.ksh
 #    Example cron job that does smart vacuum freeze commands for entire database every Saturday at 4am:
-#    * 4 * * 6 /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -a ALL >> /var/lib/pgsql/pgtools/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
+#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -a ALL -l 60 -i 30 -e PROD >> /var/lib/pgsql/pgtools/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
 #
 # NOTE: You may have to source the environment variables file in the crontab to get this program to work.
 #          #!/bin/bash
@@ -725,7 +725,7 @@ class maint:
         else:
             # select substring(query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start, state  from pg_stat_activity;
             sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
-            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || application_name || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || application_name || '  clientip=' || client_addr || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
         cmd = "psql %s -t -c \"%s\"" % (self.connstring, sql1)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
