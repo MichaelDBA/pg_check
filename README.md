@@ -1,5 +1,6 @@
 # pg_check
 Based on pg_report, but only  issues email alerts and console output, no html output format.  Currently the things checked for:
+<br/>
 `idle in transaction`
 <br/>
 `long running queries`
