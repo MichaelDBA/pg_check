@@ -762,7 +762,7 @@ class maint:
         else:
             # select pid,datname,usename, client_addr, now(), state, query_start, substring(query,1,100), now() - query_start as duration from pg_stat_activity where state not ilike 'idle%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
             sql1 = "select count(*) from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%s minutes'" % self.longquerymins
-            sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n' as query from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  appname=' || application_name || '\n' || 'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n\n' as query from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
@@ -1297,3 +1297,4 @@ if rc < SUCCESS:
 pg.cleanup()
 
 sys.exit(0)
+
