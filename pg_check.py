@@ -721,7 +721,7 @@ class maint:
         else:
             # select substring(query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start, state  from pg_stat_activity;
             sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
-            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || application_name || '  clientip=' || client_addr || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
@@ -762,7 +762,11 @@ class maint:
         else:
             # select pid,datname,usename, client_addr, now(), state, query_start, substring(query,1,100), now() - query_start as duration from pg_stat_activity where state not ilike 'idle%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
             sql1 = "select count(*) from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%s minutes'" % self.longquerymins
-            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  appname=' || application_name || '\n' || 'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n\n' as query from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  appname=' || coalesce(application_name, 'N/A') || '  minutes=' || " \
+                   "(case when state in ('active','idle in transaction') then cast(EXTRACT(EPOCH FROM (now() - query_start)) as integer) / 60 else -1 end) || '\n' ||" \
+                   "'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n\n'" \
+                   "from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
