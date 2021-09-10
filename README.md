@@ -6,6 +6,8 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 `long running queries`
 <br/>
 `waiting or blocked transactions`
+<br/>
+`high number of active connections relative to number of CPUs`
 <br/><br/>
 
 # Requirements
