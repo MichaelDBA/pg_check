@@ -1,11 +1,11 @@
 # pg_check
 Based on pg_report, but only  issues email alerts and console output, no html output format.  Currently the things checked for:
 <br/>
-`idle in transaction`
+`waiting or blocked transactions`
 <br/>
 `long running queries`
 <br/>
-`waiting or blocked transactions`
+`idle in transaction`
 <br/>
 `high number of active connections relative to number of CPUs`
 <br/><br/>
