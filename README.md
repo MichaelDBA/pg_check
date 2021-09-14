@@ -15,9 +15,9 @@ Python, psql command line tool
 <br/><br/>
 
 # Typical usage: 
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -a LONGQUERY_IDLEINTRANS_CPULOAD  -l 60 -i 30 -c 48 -e PROD
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -e PROD -v
 <br/><br/>
-`-a LONGQUERY_IDLEINTRANS_CPULOAD`   --> queries running longer than 60 minutes, idle in trans longer than 30 minutes, and high number of active connections relative to CPUs
+`-w `     --> WAITS and LOCKS checking
 <br/>
 `-l 60`   --> queries running longer than 60 minutes
 <br/>
