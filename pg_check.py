@@ -32,15 +32,20 @@
 #
 # Inputs: all fields are optional except database.
 # -h <hostname or IP address>
-# -d <database>
-# -n <schema>
 # -p <PORT>
 # -U <db user>
-# -a <action, one of: ALL, LONGQUERY_IDLEINTRANS_CPULOAD, WAITSLOCKS>
+# -n <schema>
+# -d <database>
+# -g general boolean to do all other stuff as well
+# -w waitslocks boolean
+# -l <number> check for long running queries > number
+# -i <number> check for idle in trans > number
+# -e environment ID, aka, hostname, dbname, SDLC name, etc.
+# -t [testing mode with testing email]
 # -v [verbose output flag, mostly used for debugging]
 #
 # Examples: run report on entire test database and output in web format
-# ./pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -a ALL
+# ./pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -v
 #
 # Requirements:
 #  1. python 3
@@ -56,7 +61,7 @@
 #    View cron job output: view /var/log/cron
 #    source the database environment: source ~/db_catalog.ksh
 #    Example cron job that does smart vacuum freeze commands for entire database every Saturday at 4am:
-#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -a ALL -l 60 -i 30 -e PROD >> /var/lib/pgsql/pgtools/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
+#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /var/lib/pgsql/pgtools/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
 #
 # NOTE: You may have to source the environment variables file in the crontab to get this program to work.
 #          #!/bin/bash
@@ -68,6 +73,7 @@
 # who did it         Date           did what
 # ==========         =========      ==============================
 # Michael Vitale     09/06/2021     Original coding using python 3.x CentOS 8.3 and PG 11.x
+# Michael Vitale     09/13/2021     Modified parameter structure and some fixes
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -96,8 +102,8 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.0
 PROGNAME   = "pg_check"
-ADATE      = "September 6, 2021"
-PROGDATE   = "2021-09-06"
+ADATE      = "September 13, 2021"
+PROGDATE   = "2021-09-13"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -113,26 +119,27 @@ class maint:
         self.datenow           = datetime.today()
         self.datediff          = self.datenow - self.dateprog
         
-        self.action            = ''
-        self.longquerymins     = 0
-        self.idleintransmins   = 0
-        self.cpus              = 0
+        self.genchechs         = ''
+        self.waitslocks        = False
+        self.longquerymins     = -1
+        self.idleintransmins   = -1
+        self.cpus              = -1
         self.environment       = ''
         self.dbhost            = ''
         self.dbport            = 5432
         self.dbuser            = ''
         self.database          = ''
+        self.testmode          = False
         self.verbose           = False
         self.connected         = False
 
-        #self.to                = 'mvitale@imo-online.com '
+        self.to                = 'mvitale@imo-online.com '
         self.to                = 'mvitale@imo-online.com ddempsey@imo-online.com tlaird@imo-online.com'
         self.from_             = 'pgdude@noreply.com'
 
         self.fout              = ''
         self.connstring        = ''
 
-        self.actstring         = ''
         self.schemaclause      = ' '
         self.pid               = os.getpid()
         self.opsys             = ''
@@ -178,25 +185,49 @@ class maint:
         return rc
     
     ###########################################################
-    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, action, longquerymins, idleintransmins, cpus, environment, verbose, argv):
-        self.action          = action
+    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, cpus, environment, testmode, verbose, argv):
+        self.waitslocks      = waitslocks
         self.dbhost          = dbhost
         self.dbport          = dbport
         self.dbuser          = dbuser
         self.database        = database
         self.schema          = schema
-        self.longquerymins   = int(longquerymins)
-        self.idleintransmins = int(idleintransmins)
-        self.cpus            = int(cpus)
-        self.environment     = environment
-        self.verbose         = verbose
+        self.genchecks       = genchecks
 
-        if self.environment == 'PROGTESTING':
-            self.to   = 'mvitale@imo-online.com '
-            #self.to  = 'mvitale@imo-online.com ddempsey@imo-online.com tlaird@imo-online.com'
+        if cpus == '-999':
+            #print("cpus not passed")
+            pass
+        elif cpus is None or not cpus.isdigit() or int(cpus) < 1:
+            return ERROR, "Invalid CPUs provided: %s" % cpus
+        else:
+            self.cpus            = int(cpus)
+
+        if longquerymins == '-999':
+            #print("longquerymins not passed")
+            pass
+        elif longquerymins is None or not longquerymins.isdigit() or int(longquerymins) < 1:
+            return ERROR, "Invalid longquerymins provided: %s" % longquerymins
+        else:
+            self.longquerymins   = int(longquerymins)
+
+        if idleintransmins == '-999':
+            #print("idleintransmins not passed")
+            pass
+        elif idleintransmins is None or not idleintransmins.isdigit() or int(idleintransmins) < 1:
+            return ERROR, "Invalid idleintransmins provided: %s" % idleintransmins
+        else:
+            self.idleintransmins = int(idleintransmins)
+        
+        self.environment     = environment
+        self.testmode        = testmode
+        self.verbose         = verbose        
+
+        if self.testmode:
+            self.to  = 'mvitale@imo-online.com '
             print("testing mode")
-            
-            
+        else:
+            self.to  = 'mvitale@imo-online.com ddempsey@imo-online.com tlaird@imo-online.com'
+
         # process the schema or table elements
         total   = len(argv)
         cmdargs = str(argv)
@@ -262,28 +293,8 @@ class maint:
         if rc != SUCCESS:
             return rc, results
 
-        # Validate parameters
-        rc, errors = self.validate_parms()
-        if rc != SUCCESS:
-            return rc, errors
-
         return SUCCESS, ''
 
-    ###########################################################
-    def validate_parms(self):
-
-        if self.database == '':
-            return ERROR, "Database not provided."
-
-        if self.action == 'ALL' or self.action == 'LONGQUERY_IDLEINTRANS_CPULOAD' or self.action == 'WAITSLOCKS':
-            if self.action == 'ALL' or self.action == 'LONGQUERY_IDLEINTRANS_CPULOAD':
-                if self.cpus < 1:
-                    return ERROR, "You must specify a valid cpus parameter for the action provided."
-        else:
-            return ERROR, "Invalid Action: %s" % self.action
-
-
-        return SUCCESS, ""
 
     ###########################################################
     def cleanup(self):
@@ -610,7 +621,7 @@ class maint:
     ###########################################################
     def do_report(self):
 
-        if self.action == 'WAITSLOCKS' or self.action == 'ALL':
+        if self.waitslocks:
             ##########################################################
             # Get lock waiting transactions where wait is > 30 seconds
             ##########################################################
@@ -626,11 +637,13 @@ class maint:
                 # new wait_event column replaces waiting in 9.6/10
                 # v2.2 fix: add backend_type qualifier to not consider walsender
                 sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '30 seconds'"
-                sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  waitinfo=' || wait_event || '-' || wait_event_type || '  sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n' as query from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '30 seconds'"
+                sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  waitinfo=' || wait_event || '-' || wait_event_type || ' " \
+                       "sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n' as query " \
+                       "from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '30 seconds'"
                 sql2alt = "SELECT 'blocked_pid =' || rpad(cast(blocked_locks.pid as varchar),7,' ') || ' blocked_user=' || blocked_activity.usename || " \
                     "'\nblocking_pid=' || rpad(cast(blocking_locks.pid as varchar), 7, ' ') || 'blocking_user=' || blocking_activity.usename || '\n' ||" \
-                    "'blocked_query =' || blocked_activity.query || '\n' ||" \
-                    "'blocking_query=' || blocking_activity.query || '\n\n' FROM pg_catalog.pg_locks blocked_locks " \
+                    "'blocked_query =' || regexp_replace(replace(regexp_replace(blocked_activity.query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '...\n' ||" \
+                    "'blocking_query=' || regexp_replace(replace(regexp_replace(blocking_activity.query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '...\n\n' FROM pg_catalog.pg_locks blocked_locks " \
                     "JOIN pg_catalog.pg_stat_activity blocked_activity ON blocked_activity.pid = blocked_locks.pid JOIN pg_catalog.pg_locks blocking_locks ON blocking_locks.locktype = blocked_locks.locktype AND " \
                     "blocking_locks.DATABASE IS NOT DISTINCT FROM blocked_locks.DATABASE AND blocking_locks.relation IS NOT DISTINCT FROM blocked_locks.relation AND blocking_locks.page IS NOT DISTINCT " \
                     "FROM blocked_locks.page AND blocking_locks.tuple IS NOT DISTINCT FROM blocked_locks.tuple AND blocking_locks.virtualxid IS NOT DISTINCT FROM blocked_locks.virtualxid AND " \
@@ -652,7 +665,7 @@ class maint:
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2alt)
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
-                    print ("Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2alt))            
+                    print ("Unable to get waiting or blocked queries: %d %s\nsql=%s\n" % (rc, results2, sql2alt))            
                         
                 subject = '%d %s Waiting/BLocked SQL(s) Detected' % (blocked_queries_cnt, self.environment)
                 rc = self.send_mail(self.to, self.from_, subject, results2)
@@ -661,123 +674,122 @@ class maint:
                     return 1
             print (marker+msg)
             
-        if self.action == 'WAITSLOCKS':
-            return SUCCESS, ""
-
-        #######################################################################
-        # get existing "idle in transaction" connections longer than 10 minutes
-        #######################################################################
-        # NOTE: 9.1 uses procpid, current_query, and no state column, but 9.2+ uses pid, query and state columns respectively.  Also idle is <IDLE> in current_query for 9.1 and less
-        #       <IDLE> in transaction for 9.1 but idle in transaction for state column in 9.2+
-        if self.pgversionmajor < Decimal('9.2'):
-            # select substring(current_query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start  from pg_stat_activity;
-            sql1 = "select count(*) from pg_stat_activity where current_query ilike \'<IDLE> in transaction%%\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
-            sql2 = "select datname, usename, application_name from pg_stat_activity where current_query ilike \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
-        else:
-            # select substring(query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start, state  from pg_stat_activity;
-            sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
-            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
-        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
-        rc, results = self.executecmd(cmd, False)
-        if rc != SUCCESS:
-            errors = "Unable to get count of idle in transaction connections: %d %s\nsql=%s\n" % (rc, results, sql1)
-            return rc, errors
-        idle_in_transaction_cnt = int(results)
-
-        if idle_in_transaction_cnt == 0:
-            marker = MARK_OK
-            msg = "No \"idle in transaction\" longer than %d minutes were detected." % self.idleintransmins
-        else:
-            marker = MARK_WARN
-            msg = "%d \"idle in transaction\" longer than %d minutes were detected." % (idle_in_transaction_cnt, self.idleintransmins)
-
-            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
-            rc, results2 = self.executecmd(cmd, False)
+        if self.idleintransmins   > 0:
+            #######################################################################
+            # get existing "idle in transaction" connections longer than 10 minutes
+            #######################################################################
+            # NOTE: 9.1 uses procpid, current_query, and no state column, but 9.2+ uses pid, query and state columns respectively.  Also idle is <IDLE> in current_query for 9.1 and less
+                #       <IDLE> in transaction for 9.1 but idle in transaction for state column in 9.2+
+            if self.pgversionmajor < Decimal('9.2'):
+                # select substring(current_query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start  from pg_stat_activity;
+                sql1 = "select count(*) from pg_stat_activity where current_query ilike \'<IDLE> in transaction%%\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
+                sql2 = "select datname, usename, application_name from pg_stat_activity where current_query ilike \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) > %d" % self.idleintransmins
+            else:
+                # select substring(query,1,50), round(EXTRACT(EPOCH FROM (now() - query_start))), now(), query_start, state  from pg_stat_activity;
+                sql1 = "select count(*) from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+                sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  duration=' || round(round(EXTRACT(EPOCH FROM (now() - query_start))) / 60) || ' mins' from pg_stat_activity where state = \'idle in transaction\' and round(EXTRACT(EPOCH FROM (now() - query_start))) / 60 > %d" % self.idleintransmins
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
+            rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                print ("Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2))
-            subject = '%d %s Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.environment, self.idleintransmins)            
-            rc = self.send_mail(self.to, self.from_, subject, results2)
-            if rc != 0:
-                printit("mail error")
-                return 1
-        print (marker+msg)
-
-
-        ######################################
-        # Get long running queries > 5 minutes (default
-        ######################################
-        # NOTE: 9.1 uses procpid, current_query, and no state column, but 9.2+ uses pid, query and state columns respectively.  Also idle is <IDLE> in current_query for 9.1 and less
-        #       <IDLE> in transaction for 9.1 but idle in transaction for state column in 9.2+
-        if self.pgversionmajor < Decimal('9.2'):
-            # select procpid,datname,usename, client_addr, now(), query_start, substring(current_query,1,100), now() - query_start as duration from pg_stat_activity where current_query not ilike '<IDLE%' and current_query <> ''::text and now() - query_start > interval '5 minutes';
-            sql1 = "select count(*) from pg_stat_activity where current_query not ilike '<IDLE%' and current_query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
-            sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  sql=' || query from pg_stat_activity where current_query not ilike '<IDLE%%' and current_query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
-        else:
-            # select pid,datname,usename, client_addr, now(), state, query_start, substring(query,1,100), now() - query_start as duration from pg_stat_activity where state not ilike 'idle%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
-            sql1 = "select count(*) from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%s minutes'" % self.longquerymins
-            sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  appname=' || coalesce(application_name, 'N/A') || '  minutes=' || " \
-                   "(case when state in ('active','idle in transaction') then cast(EXTRACT(EPOCH FROM (now() - query_start)) as integer) / 60 else -1 end) || '\n' ||" \
-                   "'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n\n'" \
-                   "from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
-
-        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
-        rc, results = self.executecmd(cmd, False)
-        if rc != SUCCESS:
-            errors = "Unable to get count of long running queries: %d %s\nsql=%s\n" % (rc, results, sql1)
-            return rc, errors
-        long_queries_cnt = int(results)
-        if long_queries_cnt == 0:
-            marker = MARK_OK
-            msg = "No \"long running queries\" longer than %d minutes were detected." % self.longquerymins
-            print (marker+msg)
-        else:
-            # get the actual sqls:
-            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
-            rc, results2 = self.executecmd(cmd, False)
-            if rc != SUCCESS:
-                errors = "Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2)
-                print (errors)
+                errors = "Unable to get count of idle in transaction connections: %d %s\nsql=%s\n" % (rc, results, sql1)
                 return rc, errors
+            idle_in_transaction_cnt = int(results)
+
+            if idle_in_transaction_cnt == 0:
+                marker = MARK_OK
+                msg = "No \"idle in transaction\" longer than %d minutes were detected." % self.idleintransmins
+            else:
+                marker = MARK_WARN
+                msg = "%d \"idle in transaction\" longer than %d minutes were detected." % (idle_in_transaction_cnt, self.idleintransmins)
+
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
+                rc, results2 = self.executecmd(cmd, False)
+                if rc != SUCCESS:
+                    print ("Unable to get idle in transaction queries: %d %s\nsql=%s\n" % (rc, results2, sql2))
+                subject = '%d %s Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.environment, self.idleintransmins)            
+                rc = self.send_mail(self.to, self.from_, subject, results2)
+                if rc != 0:
+                    printit("mail error")
+                    return 1
+            print (marker+msg)
+
+        if self.longquerymins > 0:
+            ######################################
+            # Get long running queries > 5 minutes (default
+            ######################################
+            # NOTE: 9.1 uses procpid, current_query, and no state column, but 9.2+ uses pid, query and state columns respectively.  Also idle is <IDLE> in current_query for 9.1 and less
+            #       <IDLE> in transaction for 9.1 but idle in transaction for state column in 9.2+
+            if self.pgversionmajor < Decimal('9.2'):
+                # select procpid,datname,usename, client_addr, now(), query_start, substring(current_query,1,100), now() - query_start as duration from pg_stat_activity where current_query not ilike '<IDLE%' and current_query <> ''::text and now() - query_start > interval '5 minutes';
+                sql1 = "select count(*) from pg_stat_activity where current_query not ilike '<IDLE%' and current_query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+                sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  sql=' || query from pg_stat_activity where current_query not ilike '<IDLE%%' and current_query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+            else:
+                # select pid,datname,usename, client_addr, now(), state, query_start, substring(query,1,100), now() - query_start as duration from pg_stat_activity where state not ilike 'idle%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+                sql1 = "select count(*) from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%s minutes'" % self.longquerymins
+                sql2 = "select 'pid=' || pid || '  db=' || datname || '  user=' || usename || '  appname=' || coalesce(application_name, 'N/A') || '  minutes=' || " \
+                       "(case when state in ('active','idle in transaction') then cast(EXTRACT(EPOCH FROM (now() - query_start)) as integer) / 60 else -1 end) || '\n' ||" \
+                       "'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n\n'" \
+                       "from pg_stat_activity where backend_type not in ('walsender') and state not ilike 'idle%%' and query <> ''::text and now() - query_start > interval '%d minutes'" % self.longquerymins
+
+            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
+            rc, results = self.executecmd(cmd, False)
+            if rc != SUCCESS:
+                errors = "Unable to get count of long running queries: %d %s\nsql=%s\n" % (rc, results, sql1)
+                return rc, errors
+            long_queries_cnt = int(results)
+            if long_queries_cnt == 0:
+                marker = MARK_OK
+                msg = "No \"long running queries\" longer than %d minutes were detected." % self.longquerymins
+                print (marker+msg)
+            else:
+                # get the actual sqls:
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
+                rc, results2 = self.executecmd(cmd, False)
+                if rc != SUCCESS:
+                    errors = "Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2)
+                    print (errors)
+                    return rc, errors
            
-            marker = MARK_WARN
-            msg = "%d \"long running queries\" longer than %d minutes were detected." % (long_queries_cnt, self.longquerymins)
-            print (marker+msg)      
-            subject = '%d %s Long Running SQL(s) Detected longer than %d minutes' % (long_queries_cnt, self.environment, self.longquerymins)
-            rc = self.send_mail(self.to, self.from_, subject, results2)
-            if rc != 0:
-                printit("mail error")
-                return 1
+                marker = MARK_WARN
+                msg = "%d \"long running queries\" longer than %d minutes were detected." % (long_queries_cnt, self.longquerymins)
+                print (marker+msg)      
+                subject = '%d %s Long Running SQL(s) Detected longer than %d minutes' % (long_queries_cnt, self.environment, self.longquerymins)
+                rc = self.send_mail(self.to, self.from_, subject, results2)
+                if rc != 0:
+                    printit("mail error")
+                    return 1
 
-        ######################################
-        # Get cpu load info
-        # db.r5.12xlarge = 48
-        ######################################
+        if self.cpus > 0:
+            ######################################
+            # Get cpu load info
+            # db.r5.12xlarge = 48
+            ######################################
 
-        sql = "select count(*) as active from pg_stat_activity where state in ('active', 'idle in transaction')"
-        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
-        rc, results = self.executecmd(cmd, False)
-        if rc != SUCCESS:
-            errors = "Unable to get count of active connections: %d %s\nsql=%s\n" % (rc, results, sql1)
-            return rc, errors
-        active_cnt = int(results)
-        cpusaturation = round(self.cpus * 2.2)
-        loadpct = round(active_cnt / cpusaturation, 2) * 100
-        loadint = int(loadpct)
-        #print("activecnt=%d  cpus=%d  cpusaturation=%4.1f   loadpct=%4.2f  loadint=%d" % (active_cnt, self.cpus,cpusaturation, loadpct, loadint))
-        if loadpct <= 80.0:
-            marker = MARK_OK
-            msg = "No \"high number of active connections\" detected:%d" % active_cnt
-        else:
-            marker = MARK_WARN
-            subject = 'High CPU load detected.'
-            msg = "\"High number of active connections\" detected:%d" % active_cnt
-            rc = self.send_mail(self.to, self.from_, subject, msg)
-            if rc != 0:
-                printit("mail error")
-                return 1
-        print (marker+msg)            
+            sql = "select count(*) as active from pg_stat_activity where state in ('active', 'idle in transaction')"
+            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
+            rc, results = self.executecmd(cmd, False)
+            if rc != SUCCESS:
+                errors = "Unable to get count of active connections: %d %s\nsql=%s\n" % (rc, results, sql1)
+                return rc, errors
+            active_cnt = int(results)
+            cpusaturation = round(self.cpus * 2.2)
+            loadpct = round(active_cnt / cpusaturation, 2) * 100
+            loadint = int(loadpct)
+            #print("activecnt=%d  cpus=%d  cpusaturation=%4.1f   loadpct=%4.2f  loadint=%d" % (active_cnt, self.cpus,cpusaturation, loadpct, loadint))
+            if loadpct <= 80.0:
+                marker = MARK_OK
+                msg = "No \"high number of active connections\" detected:%d" % active_cnt
+            else:
+                marker = MARK_WARN
+                subject = 'High CPU load detected.'
+                msg = "\"High number of active connections\" detected:%d  Implied load: %d%%" % (active_cnt, loadint)
+                rc = self.send_mail(self.to, self.from_, subject, msg)
+                if rc != 0:
+                    printit("mail error")
+                    return 1
+            print (marker+msg)            
             
-        if self.action != 'ALL':
+        if not self.genchecks:
             return SUCCESS, ""
                         
         #####################################
@@ -1305,11 +1317,13 @@ def setupOptionParser():
     parser.add_option("-U", "--dbuser",         dest="dbuser",   help="db host user",                           default="",metavar="DBUSER")
     parser.add_option("-d", "--database",       dest="database", help="database name",                          default="",metavar="DATABASE")
     parser.add_option("-n", "--schema",         dest="schema", help="schema name",                              default="",metavar="SCHEMA")
-    parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")
-    parser.add_option("-a", "--action",         dest="action", help="ALL, LONGQUERY_IDLEINTRANS_CPULOAD, WAITSLOCKS", default="",metavar="ACTION")
-    parser.add_option("-l", "--longquerymins",  dest="longquerymins", help="long query mins",                   default=30,metavar="LONGQUERYMINS")
-    parser.add_option("-c", "--cpus",           dest="cpus", help="cpus available",                             default=0,metavar="CPUS")
-    parser.add_option("-i", "--idleintransmins",dest="idleintransmins", help="idle in trans mins",              default=15,metavar="IDLEINTRANSMINS")
+    parser.add_option("-g", "--genchecks",      dest="genchecks", help="do default checks",                     default=False, action="store_true")
+    parser.add_option("-w", "--waitslocks",     dest="waitslocks", help="waits, locks",                         default=False, action="store_true")
+    parser.add_option("-l", "--longquerymins",  dest="longquerymins", help="long query mins",                   default="-999",metavar="LONGQUERYMINS")
+    parser.add_option("-c", "--cpus",           dest="cpus", help="cpus available",                             default="-999",metavar="CPUS")
+    parser.add_option("-i", "--idleintransmins",dest="idleintransmins", help="idle in trans mins",              default="-999",metavar="IDLEINTRANSMINS")
+    parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
+    parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
 
     return parser
@@ -1328,7 +1342,7 @@ pg = maint()
 
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
-                           options.action, options.longquerymins, options.idleintransmins, options.cpus, options.environment, options.verbose, sys.argv)
+                           options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, options.cpus, options.environment, options.testmode, options.verbose, sys.argv)
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
@@ -1348,3 +1362,4 @@ if rc < SUCCESS:
 pg.cleanup()
 
 sys.exit(0)
+
