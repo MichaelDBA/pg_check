@@ -37,15 +37,15 @@
 # -n <schema>
 # -d <database>
 # -g general boolean to do all other stuff as well
-# -w waitslocks boolean
-# -l <number> check for long running queries > number
-# -i <number> check for idle in trans > number
+# -w <number> check waits/locks > number seconds
+# -l <number> check for long running queries > number minutes
+# -i <number> check for idle in trans > number minutes
 # -e environment ID, aka, hostname, dbname, SDLC name, etc.
 # -t [testing mode with testing email]
 # -v [verbose output flag, mostly used for debugging]
 #
 # Examples: run report on entire test database and output in web format
-# ./pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -v
+# ./pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w 10 -l 60 -i 30 -e PROD -v
 #
 # Requirements:
 #  1. python 3
@@ -61,7 +61,8 @@
 #    View cron job output: view /var/log/cron
 #    source the database environment: source ~/db_catalog.ksh
 #    Example cron job that does smart vacuum freeze commands for entire database every Saturday at 4am:
-#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /var/lib/pgsql/pgtools/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
+#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /home/centos/logs/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
+#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /home/centos/logs/pg_check_$(date +\%Y\%m\%d).log 2>&1
 #
 # NOTE: You may have to source the environment variables file in the crontab to get this program to work.
 #          #!/bin/bash
@@ -73,7 +74,7 @@
 # who did it         Date           did what
 # ==========         =========      ==============================
 # Michael Vitale     09/06/2021     Original coding using python 3.x CentOS 8.3 and PG 11.x
-# Michael Vitale     09/13/2021     Modified parameter structure and some fixes
+# Michael Vitale     09/14/2021     Modified parameter structure and some fixes
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -102,8 +103,8 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.0
 PROGNAME   = "pg_check"
-ADATE      = "September 13, 2021"
-PROGDATE   = "2021-09-13"
+ADATE      = "September 14, 2021"
+PROGDATE   = "2021-09-14"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -120,7 +121,7 @@ class maint:
         self.datediff          = self.datenow - self.dateprog
         
         self.genchechs         = ''
-        self.waitslocks        = False
+        self.waitslocks        = -1
         self.longquerymins     = -1
         self.idleintransmins   = -1
         self.cpus              = -1
@@ -194,29 +195,37 @@ class maint:
         self.schema          = schema
         self.genchecks       = genchecks
 
-        if cpus == '-999':
+        if waitslocks == -999:
+            #print("waitslocks not passed")
+            pass
+        elif waitslocks is None or waitslocks < 1:
+            return ERROR, "Invalid waitslocks provided: %s" % waitslocks
+        else:
+            self.waitslocks      = waitslocks
+
+        if cpus == -999:
             #print("cpus not passed")
             pass
-        elif cpus is None or not cpus.isdigit() or int(cpus) < 1:
+        elif cpus is None or cpus < 1:
             return ERROR, "Invalid CPUs provided: %s" % cpus
         else:
-            self.cpus            = int(cpus)
+            self.cpus            = cpus
 
-        if longquerymins == '-999':
+        if longquerymins == -999:
             #print("longquerymins not passed")
             pass
-        elif longquerymins is None or not longquerymins.isdigit() or int(longquerymins) < 1:
+        elif longquerymins is None or longquerymins < 1:
             return ERROR, "Invalid longquerymins provided: %s" % longquerymins
         else:
-            self.longquerymins   = int(longquerymins)
+            self.longquerymins   = longquerymins
 
-        if idleintransmins == '-999':
+        if idleintransmins == -999:
             #print("idleintransmins not passed")
             pass
-        elif idleintransmins is None or not idleintransmins.isdigit() or int(idleintransmins) < 1:
+        elif idleintransmins is None or idleintransmins < 1:
             return ERROR, "Invalid idleintransmins provided: %s" % idleintransmins
         else:
-            self.idleintransmins = int(idleintransmins)
+            self.idleintransmins = idleintransmins
         
         self.environment     = environment
         self.testmode        = testmode
@@ -621,26 +630,26 @@ class maint:
     ###########################################################
     def do_report(self):
 
-        if self.waitslocks:
+        if self.waitslocks > 0:
             ##########################################################
-            # Get lock waiting transactions where wait is > 30 seconds
+            # Get lock waiting transactions where wait is > input seconds
             ##########################################################
             if self.pgversionmajor < Decimal('9.2'):
               # select procpid, datname, usename, client_addr, now(), query_start, substring(current_query,1,100), now() - query_start as duration from pg_stat_activity where waiting is true and now() - query_start > interval '30 seconds';
-                sql = "select count(*) from pg_stat_activity where waiting is true and now() - query_start > interval '30 seconds'"
+                sql = "select count(*) from pg_stat_activity where waiting is true and now() - query_start > interval '%d seconds'" % self.waitslocks
                 sql2 = "TODO"
             elif self.pgversionmajor < Decimal('9.6'):
               # select pid, datname, usename, client_addr, now(), query_start, substring(query,1,100), now() - query_start as duration from pg_stat_activity where waiting is true and now() - query_start > interval '30 seconds';
-                sql1 = "select count(*) from pg_stat_activity where waiting is true and now() - query_start > interval '30 seconds'"
+                sql1 = "select count(*) from pg_stat_activity where waiting is true and now() - query_start > interval '%d seconds'" % self.waitslocks
                 sql2 = "TODO"
             else:
                 # new wait_event column replaces waiting in 9.6/10
                 # v2.2 fix: add backend_type qualifier to not consider walsender
                 sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '30 seconds'"
                 sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  waitinfo=' || wait_event || '-' || wait_event_type || ' " \
-                       "sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n' as query " \
-                       "from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '30 seconds'"
-                sql2alt = "SELECT 'blocked_pid =' || rpad(cast(blocked_locks.pid as varchar),7,' ') || ' blocked_user=' || blocked_activity.usename || " \
+                       "sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n'" \
+                       "from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
+                sql3 = "SELECT '\n\nblocked_pid =' || rpad(cast(blocked_locks.pid as varchar),7,' ') || ' blocked_user=' || blocked_activity.usename || " \
                     "'\nblocking_pid=' || rpad(cast(blocking_locks.pid as varchar), 7, ' ') || 'blocking_user=' || blocking_activity.usename || '\n' ||" \
                     "'blocked_query =' || regexp_replace(replace(regexp_replace(blocked_activity.query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '...\n' ||" \
                     "'blocking_query=' || regexp_replace(replace(regexp_replace(blocking_activity.query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '...\n\n' FROM pg_catalog.pg_locks blocked_locks " \
@@ -658,17 +667,31 @@ class maint:
             blocked_queries_cnt = int(results)
             if blocked_queries_cnt == 0:
                 marker = MARK_OK
-                msg = "No \"Waiting/Blocked queries\" longer than 30 seconds were detected."
+                msg = "No \"Waiting/Blocked queries\" longer than %d seconds were detected." % self.waitslocks
             else:
                 marker = MARK_WARN
-                msg = "%d \"Waiting/Blocked queries\" longer than 30 seconds were detected." % blocked_queries_cnt
-                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2alt)
+                msg = "%d \"Waiting/Blocked queries\" longer than %d seconds were detected." % (blocked_queries_cnt, self.waitslocks)
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
-                    print ("Unable to get waiting or blocked queries: %d %s\nsql=%s\n" % (rc, results2, sql2alt))            
-                        
+                    print ("Unable to get waiting or blocked queries(A): %d %s\nsql=%s\n" % (rc, results2, sql2))            
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql3)
+                rc, results3 = self.executecmd(cmd, False)
+                if rc != SUCCESS:
+                    print ("Unable to get waiting or blocked queries(B): %d %s\nsql=%s\n" % (rc, results2, sql3))
+                    
                 subject = '%d %s Waiting/BLocked SQL(s) Detected' % (blocked_queries_cnt, self.environment)
-                rc = self.send_mail(self.to, self.from_, subject, results2)
+                if results2 is None or results2.strip() == '':
+                    results2 = ''
+                if results3 is None or results3.strip() == '':
+                    results3 = ''                    
+                #print("results2=%s" % results2)
+                #print("results3=%s" % results3)
+                #print("")
+                #print("results=%s" % results2 + '\r\n' + results3)
+                # /r makes body disappear!
+                #rc = self.send_mail(self.to, self.from_, subject, results2+ '\r\n' + results3)
+                rc = self.send_mail(self.to, self.from_, subject, results2 + '\n' + results3)
                 if rc != 0:
                     printit("mail error")
                     return 1
@@ -1318,10 +1341,10 @@ def setupOptionParser():
     parser.add_option("-d", "--database",       dest="database", help="database name",                          default="",metavar="DATABASE")
     parser.add_option("-n", "--schema",         dest="schema", help="schema name",                              default="",metavar="SCHEMA")
     parser.add_option("-g", "--genchecks",      dest="genchecks", help="do default checks",                     default=False, action="store_true")
-    parser.add_option("-w", "--waitslocks",     dest="waitslocks", help="waits, locks",                         default=False, action="store_true")
-    parser.add_option("-l", "--longquerymins",  dest="longquerymins", help="long query mins",                   default="-999",metavar="LONGQUERYMINS")
-    parser.add_option("-c", "--cpus",           dest="cpus", help="cpus available",                             default="-999",metavar="CPUS")
-    parser.add_option("-i", "--idleintransmins",dest="idleintransmins", help="idle in trans mins",              default="-999",metavar="IDLEINTRANSMINS")
+    parser.add_option("-w", "--waitslocks",     dest="waitslocks", type=int, help="waits, locks",               default=-999,metavar="WAITSLOCKS")
+    parser.add_option("-l", "--longquerymins",  dest="longquerymins", type=int, help="long query mins",         default=-999,metavar="LONGQUERYMINS")
+    parser.add_option("-c", "--cpus",           dest="cpus", type=int, help="cpus available",                   default=-999,metavar="CPUS")
+    parser.add_option("-i", "--idleintransmins",dest="idleintransmins", type=int, help="idle in trans mins",    default=-999,metavar="IDLEINTRANSMINS")
     parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
     parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
