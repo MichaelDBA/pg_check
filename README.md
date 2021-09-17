@@ -15,7 +15,7 @@ Python, psql command line tool
 <br/><br/>
 
 # Typical usage: 
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -e PROD -v
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD -v
 <br/><br/>
 `-w `     --> WAITS and LOCKS checking
 <br/>
