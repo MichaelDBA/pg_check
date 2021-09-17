@@ -648,7 +648,7 @@ class maint:
                 sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
                 sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  waitinfo=' || wait_event || '-' || wait_event_type || " \
                        "'  duration=' || cast(EXTRACT(EPOCH FROM (now() - query_start)) as integer) || '\n'" \
-                       "sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n'" \
+                       "'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n'" \
                        "from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
                 sql3 = "SELECT '\n\nblocked_pid =' || rpad(cast(blocked_locks.pid as varchar),7,' ') || ' blocked_user=' || blocked_activity.usename || " \
                     "'\nblocking_pid=' || rpad(cast(blocking_locks.pid as varchar), 7, ' ') || 'blocking_user=' || blocking_activity.usename || '\n' ||" \
@@ -660,6 +660,7 @@ class maint:
                     "blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid AND blocking_locks.objid IS NOT DISTINCT " \
                     "FROM blocked_locks.objid AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid AND blocking_locks.pid != blocked_locks.pid " \
                     "JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.GRANTED"
+                    
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
@@ -686,10 +687,11 @@ class maint:
                     results2 = ''
                 if results3 is None or results3.strip() == '':
                     results3 = ''                    
-                #print("results2=%s" % results2)
-                #print("results3=%s" % results3)
-                #print("")
-                #print("results=%s" % results2 + '\r\n' + results3)
+                if self.verbose:
+                    print("results2=%s" % results2)
+                    print("results3=%s" % results3)
+                    print("")
+                    print("total results=%s" % results2 + '\r\n' + results3)
                 # /r makes body disappear!
                 #rc = self.send_mail(self.to, self.from_, subject, results2+ '\r\n' + results3)
                 rc = self.send_mail(self.to, self.from_, subject, results2 + '\n' + results3)
