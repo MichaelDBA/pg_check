@@ -40,6 +40,7 @@
 # -w <number> check waits/locks > number seconds
 # -l <number> check for long running queries > number minutes
 # -i <number> check for idle in trans > number minutes
+# -o <number> check for idle connections > number minutes
 # -e environment ID, aka, hostname, dbname, SDLC name, etc.
 # -t [testing mode with testing email]
 # -v [verbose output flag, mostly used for debugging]
@@ -61,8 +62,10 @@
 #    View cron job output: view /var/log/cron
 #    source the database environment: source ~/db_catalog.ksh
 #    Example cron job that does smart vacuum freeze commands for entire database every Saturday at 4am:
-#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /home/centos/logs/pg_check_`/bin/date +'\%Y\%m\%d'`.log 2>&1
-#    */30 * * * /usr/bin/python /var/lib/pgsql/pg_tools/pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w -l 60 -i 30 -e PROD >> /home/centos/logs/pg_check_$(date +\%Y\%m\%d).log 2>&1
+#    */10 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb -w 10 -c 48 -e PROD  >> /home/centos/logs/pg_check_$(date +\%Y\%m\%d).log 2>&1
+#    */10 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb -w 10 -c 48 -e PROD
+#    */30 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb  -l 45 -i 30 -e PROD
+#    0    7 * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb  -o 2880 -e PROD
 #
 # NOTE: You may have to source the environment variables file in the crontab to get this program to work.
 #          #!/bin/bash
@@ -75,6 +78,7 @@
 # ==========         =========      ==============================
 # Michael Vitale     09/06/2021     Original coding using python 3.x CentOS 8.3 and PG 11.x
 # Michael Vitale     09/14/2021     Modified parameter structure and some fixes
+# Michael Vitale     09/27/2021     Added new functionality for idle connections
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -124,6 +128,7 @@ class maint:
         self.waitslocks        = -1
         self.longquerymins     = -1
         self.idleintransmins   = -1
+        self.idleconnmins      = -1
         self.cpus              = -1
         self.environment       = ''
         self.dbhost            = ''
@@ -186,7 +191,7 @@ class maint:
         return rc
     
     ###########################################################
-    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, cpus, environment, testmode, verbose, argv):
+    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, argv):
         self.waitslocks      = waitslocks
         self.dbhost          = dbhost
         self.dbport          = dbport
@@ -226,6 +231,14 @@ class maint:
             return ERROR, "Invalid idleintransmins provided: %s" % idleintransmins
         else:
             self.idleintransmins = idleintransmins
+            
+        if idleconnmins == -999:
+            #print("idleconnmins not passed")
+            pass
+        elif idleconnmins is None or idleconnmins < 1:
+            return ERROR, "Invalid idleconnmins provided: %s" % idleconnmins
+        else:
+            self.idleconnmins = idleconnmins
         
         self.environment     = environment
         self.testmode        = testmode
@@ -693,11 +706,17 @@ class maint:
                     print("")
                     print("total results=%s" % results2 + '\r\n' + results3)
                 # /r makes body disappear!
-                #rc = self.send_mail(self.to, self.from_, subject, results2+ '\r\n' + results3)
-                rc = self.send_mail(self.to, self.from_, subject, results2 + '\n' + results3)
-                if rc != 0:
-                    printit("mail error")
-                    return 1
+                if results2.strip() == '' and results3.strip() == '':
+                    # then must have gone away so don't report anything
+                    msg = "%d \"Waiting/Blocked queries\" longer than %d seconds were detected but details not available anymore." % (blocked_queries_cnt, self.waitslocks)
+                    if self.verbose:
+                        print("%d waits/locks detected, but details are no longer available." % blocked_queries_cnt)
+                else:
+                    #rc = self.send_mail(self.to, self.from_, subject, results2+ '\r\n' + results3)
+                    rc = self.send_mail(self.to, self.from_, subject, results2 + '\n' + results3)
+                    if rc != 0:
+                        printit("mail error")
+                        return 1
             print (marker+msg)
             
         if self.idleintransmins   > 0:
@@ -814,7 +833,63 @@ class maint:
                     printit("mail error")
                     return 1
             print (marker+msg)            
-            
+
+        if self.idleconnmins   > 0:
+            #############################################################
+            # get existing idle connections longer than specified minutes
+            #############################################################
+            # NOTE: 9.1 uses procpid, current_query, and no state column, but 9.2+ uses pid, query and state columns respectively.  Also idle is <IDLE> in current_query for 9.1 and less
+                #       <IDLE> in transaction for 9.1 but idle in transaction for state column in 9.2+
+            if self.pgversionmajor < Decimal('9.2'):
+                print ("Action not implemented for PG Versions < 9.1 and older.")
+                return 1
+            else:
+                # NOTE: filter condition based on IMO customization for "ggs"
+                sql1 = \
+                    "select count(*) from pg_stat_activity where state = 'idle' and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > %d" % self.idleconnmins
+                    
+                '''                    
+                select 'pid=' || pid || '  db=' || coalesce(datname,'N/A') || '  user=' || coalesce(usename, 'N/A') || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  state=idle' || 
+                '  backend_type=' || (case when backend_type = 'logical replication launcher' then 'logical rep launcher' when backend_type = 'autovacuum launcher' then 'autovac launcher' when backend_type = 'autovacuum worker' then 'autovac wrkr' else backend_type end) || 
+                '  backend_start=' || to_char(backend_start, 'YYYY-MM-DD HH24:MI:SS') || 
+                '  conn mins=' || cast(EXTRACT(EPOCH FROM (now() - backend_start)) / 60 as integer) || 
+                '  idle mins=' || cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 as idle_mins 
+                FROM pg_stat_activity WHERE state in ('idle') and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > 200 order by cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) desc;
+                '''                    
+                
+                sql2 = \
+                    "select 'pid=' || pid || '  db=' || coalesce(datname,'N/A') || '  user=' || coalesce(usename, 'N/A') || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  state=idle' || " \
+                    " '  backend_type=' || (case when backend_type = 'logical replication launcher' then 'logical rep launcher' when backend_type = 'autovacuum launcher' then 'autovac launcher' when backend_type = 'autovacuum worker' then 'autovac wrkr' else backend_type end) || " \
+                    " '  backend_start=' || to_char(backend_start, 'YYYY-MM-DD HH24:MI:SS') || " \
+                    " '  conn mins=' || cast(EXTRACT(EPOCH FROM (now() - backend_start)) / 60 as integer) || " \
+                    " '  idle mins=' || cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 as idle_mins " \
+                    " FROM pg_stat_activity WHERE state in ('idle') and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > %d order by cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) desc" % self.idleconnmins
+                
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
+            rc, results = self.executecmd(cmd, False)
+            if rc != SUCCESS:
+                errors = "Unable to get count of idle connections: %d %s\nsql=%s\n" % (rc, results, sql1)
+                return rc, errors
+            idle_conns = int(results)
+
+            if idle_conns == 0:
+                marker = MARK_OK
+                msg = "No \"idle connections\" longer than %d minutes were detected." % self.idleconnmins
+            else:
+                marker = MARK_WARN
+                msg = "%d \"idle connections\" longer than %d minutes were detected." % (idle_conns, self.idleconnmins)
+
+                cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
+                rc, results2 = self.executecmd(cmd, False)
+                if rc != SUCCESS:
+                    print ("Unable to get idle connection: %d %s\nsql=%s\n" % (rc, results2, sql2))
+                subject = '%d %s Idle connection(s) detected longer than %d minutes' % (idle_conns, self.environment, self.idleconnmins)            
+                rc = self.send_mail(self.to, self.from_, subject, results2)
+                if rc != 0:
+                    printit("mail error")
+                    return 1
+            print (marker+msg)
+
         if not self.genchecks:
             return SUCCESS, ""
                         
@@ -1348,6 +1423,7 @@ def setupOptionParser():
     parser.add_option("-l", "--longquerymins",  dest="longquerymins", type=int, help="long query mins",         default=-999,metavar="LONGQUERYMINS")
     parser.add_option("-c", "--cpus",           dest="cpus", type=int, help="cpus available",                   default=-999,metavar="CPUS")
     parser.add_option("-i", "--idleintransmins",dest="idleintransmins", type=int, help="idle in trans mins",    default=-999,metavar="IDLEINTRANSMINS")
+    parser.add_option("-o", "--idleconnmins",   dest="idleconnmins", type=int, help="idle connections mins",    default=-999,metavar="IDLECONNMINS")
     parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
     parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
@@ -1368,7 +1444,7 @@ pg = maint()
 
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
-                           options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, options.cpus, options.environment, options.testmode, options.verbose, sys.argv)
+                           options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, sys.argv)
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
