@@ -1,4 +1,11 @@
 # pg_check
+(c) 2018-2022 SQLEXEC LLC
+<br/>
+GNU V3 and MIT licenses are conveyed accordingly.
+<br/>
+Bugs can be reported @ michaeldba@sqlexec.com
+
+# Overview
 Based on pg_report, but only  issues email alerts and console output, no html output format.  Currently the things checked for:
 <br/>
 `waiting or blocked transactions`
@@ -28,7 +35,7 @@ pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD
 <br/>
 `-0 2440`   --> idle connections more than 2 days
 <br/>
-`-c 48`   --> number of CPUs serving this PG instance
+`-c 48`   --> number of CPUs serving this PG instance (not necessary if db is on localhost)
 <br/>
 `-e PROD` --> User Context for PG instances that shows up in email subject line
 
