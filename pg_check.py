@@ -6,7 +6,7 @@
 ###############################################################################
 ### COPYRIGHT NOTICE FOLLOWS.  DO NOT REMOVE
 ###############################################################################
-### Copyright (c) 2021 SQLEXEC LLC
+### Copyright (c) 1998 - 2022 SQLEXEC LLC
 ###
 ### Permission to use, copy, modify, and distribute this software and its
 ### documentation for any purpose, without fee, and without a written agreement
@@ -46,7 +46,7 @@
 # -v [verbose output flag, mostly used for debugging]
 #
 # Examples: run report on entire test database and output in web format
-# ./pg_check.py -h localhost -p 5432 -U sysdba -n concept -d conceptdb -w 10 -l 60 -i 30 -e PROD -v
+# ./pg_check.py -h localhost -p 5413 -U postgres -n concept -d dvdrental -w 10 -l 60 -i 30 -c 4 -o 2440 -e PROD -v
 #
 # Requirements:
 #  1. python 3
@@ -80,6 +80,7 @@
 # Michael Vitale     09/14/2021     Modified parameter structure and some fixes
 # Michael Vitale     09/27/2021     Added new functionality for idle connections
 # Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
+# Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -106,10 +107,10 @@ NOTICE    = 2
 TOOLONG   = 3
 HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email alerts for waits, locks, idle in trans, long queries."
-VERSION    = 1.0
+VERSION    = 1.1
 PROGNAME   = "pg_check"
-ADATE      = "September 14, 2021"
-PROGDATE   = "2021-09-14"
+ADATE      = "May 29, 2022"
+PROGDATE   = "2022-05-29"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -132,6 +133,7 @@ class maint:
         self.idleconnmins      = -1
         self.cpus              = -1
         self.environment       = ''
+        self.local             = False
         self.dbhost            = ''
         self.dbport            = 5432
         self.dbuser            = ''
@@ -140,8 +142,8 @@ class maint:
         self.verbose           = False
         self.connected         = False
 
-        self.to                = 'mvitale@imo-online.com '
-        self.to                = 'mvitale@imo-online.com ddempsey@imo-online.com tlaird@imo-online.com'
+        self.to                = 'michaeldba@sqlexec.com '
+        self.to                = 'michaeldba@sqlexec.com michael@vitalehouse.com'
         self.from_             = 'pgdude@noreply.com'
 
         self.fout              = ''
@@ -246,10 +248,10 @@ class maint:
         self.verbose         = verbose        
 
         if self.testmode:
-            self.to  = 'mvitale@imo-online.com '
+            self.to  = 'michaeldba@sqlexec.com '
             print("testing mode")
         else:
-            self.to  = 'mvitale@imo-online.com ddempsey@imo-online.com tlaird@imo-online.com'
+            self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
 
         # process the schema or table elements
         total   = len(argv)
@@ -281,6 +283,11 @@ class maint:
             self.connstring += " -U %s " % self.dbuser
         if self.schema != '':
             self.schemaclause = " and n.nspname = '%s' " % self.schema
+
+        # check if local connection for automatic checking of cpus, mem, etc.
+        if 'localhost' in self.dbhost or '127.0.0.1' in self.dbhost or dbhost == '':
+            # appears to be local host
+            self.local = True
 
         if self.verbose:
             print ("The total numbers of args passed to the script: %d " % total)
@@ -808,7 +815,7 @@ class maint:
                     printit("mail error")
                     return 1
 
-        if self.cpus > 0:
+        if self.cpus > 0 or self.local:
             ######################################
             # Get cpu load info
             # db.r5.12xlarge = 48
@@ -1455,7 +1462,7 @@ if rc != SUCCESS:
     optionParser.print_help()
     sys.exit(1)
 
-print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s     PG Database: %s\n\n" % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.database))
+print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
 
 #print ("globals=%s" % globals())
 #print ("locals=%s" % locals())
