@@ -79,6 +79,7 @@
 # Michael Vitale     09/06/2021     Original coding using python 3.x CentOS 8.3 and PG 11.x
 # Michael Vitale     09/14/2021     Modified parameter structure and some fixes
 # Michael Vitale     09/27/2021     Added new functionality for idle connections
+# Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -658,7 +659,10 @@ class maint:
             else:
                 # new wait_event column replaces waiting in 9.6/10
                 # v2.2 fix: add backend_type qualifier to not consider walsender
-                sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
+
+                # filter out DataFileRead-IO
+                #sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
+                sql1 = "select count(*) from pg_stat_activity where wait_event is NOT NULL AND wait_event <> 'DataFileRead' and state = 'active' and backend_type <> 'walsender' and now() - query_start > interval '%d seconds'" % self.waitslocks
                 sql2 = "select 'db=' || datname || '  user=' || usename || '  appname=' || application_name || '  waitinfo=' || wait_event || '-' || wait_event_type || " \
                        "'  duration=' || cast(EXTRACT(EPOCH FROM (now() - query_start)) as integer) || '\n'" \
                        "'sql=' || regexp_replace(replace(regexp_replace(query, E'[\\n\\r]+', ' ', 'g' ),'    ',''), '[^\x20-\x7f\x0d\x1b]', '', 'g') || '\n'" \
