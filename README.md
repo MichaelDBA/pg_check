@@ -38,4 +38,13 @@ pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD
 `-c 48`   --> number of CPUs serving this PG instance (not necessary if db is on localhost)
 <br/>
 `-e PROD` --> User Context for PG instances that shows up in email subject line
+<br/>
+`-m`      --> Send Mail Notifications
+<br/>
+`-s`      --> Send Slack Notifications
+
+
+
+
+
 
