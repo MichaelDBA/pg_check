@@ -846,7 +846,8 @@ class maint:
                 errors = "Unable to get count of active connections: %d %s\nsql=%s\n" % (rc, results, sql1)
                 return rc, errors
             active_cnt = int(results)
-            cpusaturation = round(self.cpus * 2.2)
+            # formula is (#cpus * 2) + (#cpus / 2)
+            cpusaturation = round(self.cpus * 2.5)
             loadpct = round(active_cnt / cpusaturation, 2) * 100
             loadint = int(loadpct)
             #print("activecnt=%d  cpus=%d  cpusaturation=%4.1f   loadpct=%4.2f  loadint=%d" % (active_cnt, self.cpus,cpusaturation, loadpct, loadint))
