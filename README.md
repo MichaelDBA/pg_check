@@ -27,7 +27,7 @@ Python, psql command line tool
 pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD <br/>
 pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD 
 <br/><br/>
-`-w `     --> WAITS and LOCKS checking
+`-w 5 `     --> WAITS and LOCKS checking > number of seconds provided
 <br/>
 `-l 60`   --> queries running longer than 60 minutes
 <br/>
