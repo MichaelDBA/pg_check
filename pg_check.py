@@ -144,6 +144,11 @@ class maint:
         self.connected         = False
         self.slacknotify       = False
         self.mailnotify        = False
+        # slack hook found in users home dir/.slackhook file
+        hookfile = os.path.expanduser("~") + '/.slackhook'
+        with open(hookfile) as f:
+            self.slackhook = f.readline().strip('\n')
+        #print ('slackhook=%s' % self.slackhook)
 
         self.to                = 'michael.vitale@capgemini.com'
         #self.to                = 'michaeldba@sqlexec.com michael@vitalehouse.com'
@@ -201,7 +206,7 @@ class maint:
           if self.verbose:
               print ("sending to slack...")
           msg2 = subject + ':' + body
-          msg = 'curl --location "https://hooks.slack.com/services/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" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
+          msg = 'curl --location "' + self.slackhook + '" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
           rc = os.system(msg)
           #print (msg)
         return rc
@@ -221,6 +226,7 @@ class maint:
 
         self.slacknotify     = slacknotify
         self.mailnotify      = mailnotify
+        
         
         if waitslocks == -999:
             #print("waitslocks not passed")
@@ -1473,8 +1479,6 @@ optionParser   = setupOptionParser()
 
 # load the instance
 pg = maint()
-
-print ("testing 1 2 3")
 
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
