@@ -6,7 +6,7 @@
 ###############################################################################
 ### COPYRIGHT NOTICE FOLLOWS.  DO NOT REMOVE
 ###############################################################################
-### Copyright (c) 1998 - 2022 SQLEXEC LLC
+### Copyright (c) 1998 - 2023 SQLEXEC LLC
 ###
 ### Permission to use, copy, modify, and distribute this software and its
 ### documentation for any purpose, without fee, and without a written agreement
@@ -81,6 +81,7 @@
 # Michael Vitale     09/27/2021     Added new functionality for idle connections
 # Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
 # Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
+# Michael Vitale     12/12/2023     Major Upgrade: added slack notification method, bug fixes
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -109,8 +110,8 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.1
 PROGNAME   = "pg_check"
-ADATE      = "May 29, 2022"
-PROGDATE   = "2022-05-29"
+ADATE      = "Dec 12, 2023"
+PROGDATE   = "2023-12-12"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -141,9 +142,11 @@ class maint:
         self.testmode          = False
         self.verbose           = False
         self.connected         = False
+        self.slacknotify       = False
+        self.mailnotify        = False
 
-        self.to                = 'michaeldba@sqlexec.com '
-        self.to                = 'michaeldba@sqlexec.com michael@vitalehouse.com'
+        self.to                = 'michael.vitale@capgemini.com'
+        #self.to                = 'michaeldba@sqlexec.com michael@vitalehouse.com'
         self.from_             = 'pgdude@noreply.com'
 
         self.fout              = ''
@@ -188,13 +191,23 @@ class maint:
         # msg = 'echo "%s" | mailx -s "%s" -r %s -- %s' % (body, subject, to, from_)
         msg = 'echo "%s" | mailx -s "%s" %s' % (body, subject, to)
         # print ("DEBUG: msg=%s" % msg)
-        rc = os.system(msg)
-        #if rc == 0:
-        #    print("email sent successfully.")
+        if self.mailnotify:
+            if self.verbose:
+                print ("sending email...")
+            rc = os.system(msg)
+            #if rc == 0:
+            #    print("email sent successfully.")
+        if self.slacknotify:
+          if self.verbose:
+              print ("sending to slack...")
+          msg2 = subject + ':' + body
+          msg = 'curl --location "https://hooks.slack.com/services/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" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
+          rc = os.system(msg)
+          #print (msg)
         return rc
     
     ###########################################################
-    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, argv):
+    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, slacknotify, mailnotify, argv):
         self.waitslocks      = waitslocks
         self.dbhost          = dbhost
         self.dbport          = dbport
@@ -202,7 +215,13 @@ class maint:
         self.database        = database
         self.schema          = schema
         self.genchecks       = genchecks
+        self.environment     = environment
+        self.testmode        = testmode
+        self.verbose         = verbose        
 
+        self.slacknotify     = slacknotify
+        self.mailnotify      = mailnotify
+        
         if waitslocks == -999:
             #print("waitslocks not passed")
             pass
@@ -243,15 +262,14 @@ class maint:
         else:
             self.idleconnmins = idleconnmins
         
-        self.environment     = environment
-        self.testmode        = testmode
-        self.verbose         = verbose        
-
         if self.testmode:
-            self.to  = 'michaeldba@sqlexec.com '
+            #self.to  = 'michaeldba@sqlexec.com '
+            self.to  = 'michael.vitale@capgemini.com'
             print("testing mode")
         else:
-            self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
+            #self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
+            self.to  = 'michael.vitale@capgemini.com'
+             
 
         # process the schema or table elements
         total   = len(argv)
@@ -1438,6 +1456,8 @@ def setupOptionParser():
     parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
     parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
+    parser.add_option("-s", "--slacknotify",    dest="slacknotify", help="Slack Notifications",                 default=False, action="store_true")
+    parser.add_option("-m", "--mailnotify",    dest="mailnotify", help="Mail Notifications",                    default=False, action="store_true")
 
     return parser
 
@@ -1453,16 +1473,20 @@ optionParser   = setupOptionParser()
 # load the instance
 pg = maint()
 
+print ("testing 1 2 3")
+
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
-                           options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, sys.argv)
+                           options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, \
+                           options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, options.slacknotify, options.mailnotify, sys.argv)
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
     optionParser.print_help()
     sys.exit(1)
 
-print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
+print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" \
+       % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
 
 #print ("globals=%s" % globals())
 #print ("locals=%s" % locals())
@@ -1475,4 +1499,3 @@ if rc < SUCCESS:
 pg.cleanup()
 
 sys.exit(0)
-
