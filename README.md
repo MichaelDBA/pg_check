@@ -24,8 +24,8 @@ Python, psql command line tool
 <br/><br/>
 
 # Typical usage: 
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD <br/>
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD 
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD -m <br/>
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD -s
 <br/><br/>
 `-w 5 `     --> WAITS and LOCKS checking greater than number of seconds provided
 <br/>
