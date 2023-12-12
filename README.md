@@ -25,8 +25,8 @@ Python, psql command line tool
 
 # Slack Setup: 
 You need to put the slack webhook into a specific file location: <user home directory>/.slackhook
-It looks like this:
-https://hooks.slack.com/services/<somekeyvalue>
+<br/>It looks like this:
+<br/>https://hooks.slack.com/services/<somekeyvalue>
 
 # Typical usage: 
 pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD -m <br/>
