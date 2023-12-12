@@ -24,7 +24,7 @@ Python, psql command line tool
 <br/><br/>
 
 # Slack Setup: 
-You need to put the slack webhook into a specific file location: <user home directory>/.slackhook
+You need to put the slack webhook into a specific file location: **<user home directory>/.slackhook**
 <br/>It looks like this: <br/>https://hooks.slack.com/services/ "somekeyvalue without the quotes and leading space"
 
 # Typical usage: 
