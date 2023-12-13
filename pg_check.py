@@ -82,6 +82,7 @@
 # Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
 # Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
 # Michael Vitale     12/12/2023     Major Upgrade: added slack notification method, bug fixes
+# Michael Vitale     12/13/2023     Fixed PG major and minor version checking based on latest versions.
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -107,11 +108,11 @@ DEFERRED  = 1
 NOTICE    = 2
 TOOLONG   = 3
 HIGHLOAD  = 4
-DESCRIPTION="This python utility program issues email alerts for waits, locks, idle in trans, long queries."
+DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.1
 PROGNAME   = "pg_check"
-ADATE      = "Dec 12, 2023"
-PROGDATE   = "2023-12-12"
+ADATE      = "Dec 13, 2023"
+PROGDATE   = "2023-12-13"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -180,6 +181,7 @@ class maint:
         self.archive_mode      = ''
         self.max_connections   = -1
         self.datadir           = ''
+        self.waldir            = ''
         self.shared_buffers    = -1
         self.work_mem          = -1
         self.maint_work_mem    = -1
@@ -194,6 +196,7 @@ class maint:
     def send_mail(self, to, from_, subject, body):
         # assumes nonprintables are already removed from the body, else it will send it as an attachment and not in the body of the email!
         # msg = 'echo "%s" | mailx -s "%s" -r %s -- %s' % (body, subject, to, from_)
+        rc = 0
         msg = 'echo "%s" | mailx -s "%s" %s' % (body, subject, to)
         # print ("DEBUG: msg=%s" % msg)
         if self.mailnotify:
@@ -238,7 +241,15 @@ class maint:
 
         if cpus == -999:
             #print("cpus not passed")
-            pass
+            # cat /proc/cpuinfo | grep processor | wc -l
+            cmd = 'cat /proc/cpuinfo | grep processor | wc -l'
+            rc, results = self.executecmd(cmd, True)
+            if rc != SUCCESS:
+                # just pass
+                print ("Unable to get CPU count.")
+            else:
+                self.cpus = int(results)
+                #print("Cpus=%d" % self.cpus)
         elif cpus is None or cpus < 1:
             return ERROR, "Invalid CPUs provided: %s" % cpus
         else:
@@ -444,6 +455,11 @@ class maint:
 
             if name == 'data_directory':
                 self.datadir = setting
+                if self.pgversionmajor > Decimal('9.6'):
+                    self.waldir = "%s/pg_wal" % self.datadir                
+                else:
+                    self.waldir = "%s/pg_xlog" % self.datadir        
+                
                 # for pg rds version, 9.6,  "show all" command does not have shared_preload_libraries! so rely on data_directory instead
                 if 'rdsdbdata' in self.datadir:
                     self.pg_type = 'rds'                
@@ -932,42 +948,52 @@ class maint:
         #####################################
         # analyze pg major and minor versions
         #####################################
-        if self.pgversionmajor < Decimal('9.6'):
+        if self.pgversionmajor < Decimal('11.0'):
             marker = MARK_WARN
             msg = "Unsupported major version detected: %.1f.  Please upgrade ASAP." % self.pgversionmajor
             html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"            
-        elif self.pgversionmajor < Decimal('13.0'):
+        elif self.pgversionmajor < Decimal('16.0'):
             marker = MARK_WARN        
-            msg = "Current PG major version is not the latest (%.1f).  Consider upgrading to 13." % self.pgversionmajor
+            msg = "Current PG major version (%s) is not the latest.  Consider upgrading to 16." % self.pgversionmajor
             html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"                        
         else:
             marker = MARK_OK        
-            msg = "Current PG major version is the latest (%.1f).  No major upgrade necessary." % self.pgversionmajor        
+            msg = "Current PG major version (%s) is the latest.  No major upgrade necessary." % self.pgversionmajor        
             html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"blue\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"blue\">" + msg + "</font></td></tr>"        
 
         print (marker+msg)        
         
-        # latest versions: 13.1, 12.5, 11.10, 10.15, 9.6.20
+        # latest versions: 16.1, 15.5, 14.10, 13.13, 12.17, 11.22, 10.23, 9.6.24
+        #print("latest version: %s" % self.pgversionmajor)
         if self.pgversionmajor > Decimal('9.5'):
             if self.datediff.days > 120:
                 # probably a newer minor version is already out since these minor versions were last updated in the program
                 marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to latest minor version." % self.pgversionminor
-            elif self.pgversionmajor == Decimal('9.6') and self.pgversionminor < '9.6.20':
+            elif self.pgversionmajor == Decimal('9.6') and self.pgversionminor < '9.6.24':
                 marker = MARK_WARN
-                msg = "Current version: %s.  Please upgrade to latest minor version, 9.6.20." % self.pgversionminor
-            elif self.pgversionmajor == Decimal('10.0') and self.pgversionminor < '10.15':
+                msg = "Current version: %s.  Please upgrade to last minor version, 9.6.24." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('10.0') and self.pgversionminor < '10.23':
                 marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 10.15." % self.pgversionminor
-            elif self.pgversionmajor == Decimal('11.0') and self.pgversionminor < '11.10':
+                msg = "Current version: %s.  Please upgrade to last minor version, 10.23." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('11.0') and self.pgversionminor < '11.22':
                 marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 11.10." % self.pgversionminor
-            elif self.pgversionmajor == Decimal('12.0') and self.pgversionminor < '12.5':
+                msg = "Current version: %s.  Please upgrade to latest minor version, 11.22." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('12.0') and self.pgversionminor < '12.17':
                 marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 12.5." % self.pgversionminor
-            elif self.pgversionmajor == Decimal('13.0') and self.pgversionminor < '13.1':
+                msg = "Current version: %s.  Please upgrade to latest minor version, 12.17." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('13.0') and self.pgversionminor < '13.13':
                 marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 13.1." % self.pgversionminor
+                msg = "Current version: %s.  Please upgrade to latest minor version, 13.13." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('14.0') and self.pgversionminor < '14.10':
+                marker = MARK_WARN        
+                msg = "Current version: %s.  Please upgrade to latest minor version, 14.10." % self.pgversionminor
+            elif self.pgversionmajor == Decimal('15.0') and self.pgversionminor < '15.5':
+                marker = MARK_WARN        
+                msg = "Current version: %s.  Please upgrade to latest minor version, 15.5." % self.pgversionminor                
+            elif self.pgversionmajor == Decimal('16.0') and self.pgversionminor < '16.1':
+                marker = MARK_WARN        
+                msg = "Current version: %s.  Please upgrade to latest minor version, 16.1." % self.pgversionminor                
             else:
                 marker = MARK_OK        
                 msg = "Current PG minor version is the latest (%s). No minor upgrade necessary." % self.pgversionminor        
@@ -1432,9 +1458,31 @@ class maint:
             msg = "%d vacuum analyze candidate(s) were found." % int(results)
         print (marker+msg)
 
-        ########################################
-        ### end of linux only network checks ###
-        ########################################
+        #############################
+        ### Check for directory sizes
+        #############################
+        # assume we already got datadir from show variable earlier
+        #rc, results = self.get_datadir()
+        #if rc != SUCCESS:
+        #    print ("Unable to get directory sizes.")
+        # get sizes for datadir and pg_wal.
+        # for now treat pg_wal as being under the same mount point as datadir
+        #select sum(size) from pg_ls_waldir()
+        cmd = "df -h %s | tail -n1 | awk '{print($5)}' | cut -d'%%' -f1" % self.datadir
+        rc, results = self.executecmd(cmd, True)
+        if rc != SUCCESS:
+            print ("Unable to get directory sizes.")
+        else:
+            #print ("df -h results = %s" % results)
+            pctused = int(results)
+            if pctused > 75:
+                marker = MARK_WARN
+                msg = "Data Directory Usage is high: %d%% used" % pctused
+            else:    
+                marker = MARK_OK
+                msg = "Data Directory Usage is acceptable: %d%% used" % pctused                
+        print (marker+msg)
+        
 
         return SUCCESS, ""
 
