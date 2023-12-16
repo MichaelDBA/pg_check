@@ -17,6 +17,9 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 `idle connections`
 <br/>
 `high number of active connections relative to number of CPUs`
+<br/>
+`Data Directory size > 75%`
+
 <br/><br/>
 
 # Requirements
