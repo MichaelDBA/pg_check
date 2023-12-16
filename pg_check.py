@@ -83,6 +83,7 @@
 # Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
 # Michael Vitale     12/12/2023     Major Upgrade: added slack notification method, bug fixes
 # Michael Vitale     12/13/2023     Fixed PG major and minor version checking based on latest versions.
+# Michael Vitale     12/16/2023     Enhancement: Control how often alerts are done based on history alert file.
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -109,12 +110,22 @@ NOTICE    = 2
 TOOLONG   = 3
 HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
-VERSION    = 1.1
+VERSION    = 1.2
 PROGNAME   = "pg_check"
-ADATE      = "Dec 13, 2023"
-PROGDATE   = "2023-12-13"
+ADATE      = "Dec 16, 2023"
+PROGDATE   = "2023-12-16"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
+
+# alert notifications
+TESTALERT="TestAlert"
+DIRSIZE  ="DirSize"
+IDLECONNS="IdleConns"
+WAITS="Waits"
+IDLEINTRANS="IdleInTrans"
+LONGQUERY="LongQuery"
+ACTIVECONNS="ActiveConns"
+
 
 #############################################################################################
 ########################### class definition ################################################
@@ -142,6 +153,7 @@ class maint:
         self.database          = ''
         self.testmode          = False
         self.verbose           = False
+        self.debug             = False
         self.connected         = False
         self.slacknotify       = False
         self.mailnotify        = False
@@ -167,6 +179,10 @@ class maint:
         self.pgversionmajor    = Decimal('0.0')
         self.pgversionminor    = '0.0'        
         self.programdir        = ''
+        self.alertsfile        = ''
+        self.alertslist        = []
+        # default is 1 hour
+        self.alertmaxsecs      = 3600
 
         self.slaves            = []
         self.slavecnt          = 0
@@ -193,29 +209,30 @@ class maint:
         self.overcommit_ratio  = -1
 
     ###########################################################
-    def send_mail(self, to, from_, subject, body):
+    def send_alert(self, to, from_, subject, body):
         # assumes nonprintables are already removed from the body, else it will send it as an attachment and not in the body of the email!
         # msg = 'echo "%s" | mailx -s "%s" -r %s -- %s' % (body, subject, to, from_)
         rc = 0
-        msg = 'echo "%s" | mailx -s "%s" %s' % (body, subject, to)
+        msg2 = self.environment + '  ' + subject
+        msg = 'echo "%s" | mailx -s "%s" %s' % (body, msg2, to)
         # print ("DEBUG: msg=%s" % msg)
         if self.mailnotify:
             if self.verbose:
-                print ("sending email...")
+                print ("[****]  sending email...")
             rc = os.system(msg)
             #if rc == 0:
             #    print("email sent successfully.")
         if self.slacknotify:
           if self.verbose:
-              print ("sending to slack...")
-          msg2 = subject + ':' + body
+              print ("[****]  sending to slack...")
+          msg2 = self.environment + '  ' + subject + ':' + body
           msg = 'curl --location "' + self.slackhook + '" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
           rc = os.system(msg)
           #print (msg)
         return rc
     
     ###########################################################
-    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, slacknotify, mailnotify, argv):
+    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, debug, slacknotify, mailnotify, argv):
         self.waitslocks      = waitslocks
         self.dbhost          = dbhost
         self.dbport          = dbport
@@ -226,6 +243,7 @@ class maint:
         self.environment     = environment
         self.testmode        = testmode
         self.verbose         = verbose        
+        self.debug           = debug
 
         self.slacknotify     = slacknotify
         self.mailnotify      = mailnotify
@@ -282,7 +300,7 @@ class maint:
         if self.testmode:
             #self.to  = 'michaeldba@sqlexec.com '
             self.to  = 'michael.vitale@capgemini.com'
-            print("testing mode")
+            #print("testing mode")
         else:
             #self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
             self.to  = 'michael.vitale@capgemini.com'
@@ -358,7 +376,57 @@ class maint:
         if rc != SUCCESS:
             return rc, results
 
+        # get history of alerts to control current sesssion alerts
+        self.alertsfile = self.programdir + '/' + 'pg_check.alerts'
+        if os.path.isfile(self.alertsfile):
+            # read in last 30 alerts for subsequent checking
+            #print ("Alerts file found.")
+            with open(self.alertsfile) as file:
+                for aline in (file.readlines() [-30:]):
+                    self.alertslist += [aline.strip()]
+            #print("The list: " + str(self.alertslist))                     
+            self.alert(TESTALERT)
+            
+        else:
+            #print("alerts file not found: %s" % self.alertsfile)        
+            pass
+
         return SUCCESS, ''
+
+
+    ###########################################################
+    def log_alert(self, msg):
+        afile = open(self.programdir + '/' + 'pg_check.alerts', "a")
+        n = datetime.now()
+        adate = n.strftime("%Y-%m-%d %H:%M:%S")
+        afile.write(adate + '*' + msg + '\n')
+        afile.close()
+        return
+
+
+    ###########################################################
+    def alert(self, msg):
+        #print("msg=%s" % msg)
+        for alert in self.alertslist:
+            parts = alert.split('*')
+            adatetimestr = parts[0].strip()
+            adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")
+            analert   = parts[1].strip()
+            dt1 = datetime.now()
+            diff = dt1 - adatetimeobj 
+            secs = diff.seconds 
+            # only alert on certain types of conditions
+            if secs > self.alertmaxsecs:
+                if msg == TESTALERT:
+                    return True
+                elif msg ==ACTIVECONNS:
+                    return True
+                elif msg ==DIRSIZE:
+                    return True                    
+                elif msg ==WAITS:
+                    return True                        
+        return False
+
 
 
     ###########################################################
@@ -507,8 +575,8 @@ class maint:
 
     ###########################################################
     def executecmd(self, cmd, expect):
-        if self.verbose:
-            print ("executecmd --> %s" % cmd)
+        if self.debug:
+            print ("[****]  executecmd --> %s" % cmd)
 
         # NOTE: try and catch does not work for Popen
         try:
@@ -556,8 +624,8 @@ class maint:
         values = values.strip()
                 
         rc = p.returncode
-        if self.verbose:
-            print ("rc=%d  values=***%s***  errors=***%s***" % (rc, values, err))
+        if self.debug:
+            print ("[****]  rc=%d  values=***%s***  errors=***%s***" % (rc, values, err))
 
         if rc == 1 or rc == 2:
             return ERROR2, err
@@ -691,6 +759,19 @@ class maint:
     ###########################################################
     def do_report(self):
 
+        if self.testmode:
+            marker = MARK_WARN
+            subject = 'Test Mode'
+            msg = "Testing notifications."
+            rc = self.send_alert(self.to, self.from_, subject, msg)
+            if rc != 0:
+                print("mail error")
+                return ERROR, ''
+            self.log_alert(TESTALERT)
+            print (marker+msg)            
+            
+
+
         if self.waitslocks > 0:
             ##########################################################
             # Get lock waiting transactions where wait is > input seconds
@@ -746,16 +827,16 @@ class maint:
                 if rc != SUCCESS:
                     print ("Unable to get waiting or blocked queries(B): %d %s\nsql=%s\n" % (rc, results2, sql3))
                     
-                subject = '%d %s Waiting/BLocked SQL(s) Detected' % (blocked_queries_cnt, self.environment)
+                subject = '%d Waiting/BLocked SQL(s) Detected' % (blocked_queries_cnt)
                 if results2 is None or results2.strip() == '':
                     results2 = ''
                 if results3 is None or results3.strip() == '':
                     results3 = ''                    
-                if self.verbose:
-                    print("results2=%s" % results2)
-                    print("results3=%s" % results3)
-                    print("")
-                    print("total results=%s" % results2 + '\r\n' + results3)
+                if self.debug:
+                    print("[****]  results2=%s" % results2)
+                    print("[****]  results3=%s" % results3)
+                    print("[****]  ")
+                    print("[****]  total results=%s" % results2 + '\r\n' + results3)
                 # /r makes body disappear!
                 if results2.strip() == '' and results3.strip() == '':
                     # then must have gone away so don't report anything
@@ -763,11 +844,12 @@ class maint:
                     if self.verbose:
                         print("%d waits/locks detected, but details are no longer available." % blocked_queries_cnt)
                 else:
-                    #rc = self.send_mail(self.to, self.from_, subject, results2+ '\r\n' + results3)
-                    rc = self.send_mail(self.to, self.from_, subject, results2 + '\n' + results3)
-                    if rc != 0:
-                        printit("mail error")
-                        return 1
+                    #rc = self.send_alert(self.to, self.from_, subject, results2+ '\r\n' + results3)
+                    if self.alert(WAITS):
+                        rc = self.send_alert(self.to, self.from_, subject, results2 + '\n' + results3)
+                        if rc != 0:
+                            print("mail error")
+                            return 1
             print (marker+msg)
             
         if self.idleintransmins   > 0:
@@ -802,11 +884,12 @@ class maint:
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
                     print ("Unable to get idle in transaction queries: %d %s\nsql=%s\n" % (rc, results2, sql2))
-                subject = '%d %s Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.environment, self.idleintransmins)            
-                rc = self.send_mail(self.to, self.from_, subject, results2)
-                if rc != 0:
-                    printit("mail error")
-                    return 1
+                subject = '%d Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.idleintransmins)            
+                if self.alert(IDLEINTRANS):
+                    rc = self.send_alert(self.to, self.from_, subject, results2)
+                    if rc != 0:
+                        print("mail error")
+                        return 1
             print (marker+msg)
 
         if self.longquerymins > 0:
@@ -849,11 +932,12 @@ class maint:
                 marker = MARK_WARN
                 msg = "%d \"long running queries\" longer than %d minutes were detected." % (long_queries_cnt, self.longquerymins)
                 print (marker+msg)      
-                subject = '%d %s Long Running SQL(s) Detected longer than %d minutes' % (long_queries_cnt, self.environment, self.longquerymins)
-                rc = self.send_mail(self.to, self.from_, subject, results2)
-                if rc != 0:
-                    printit("mail error")
-                    return 1
+                subject = '%d Long Running SQL(s) Detected longer than %d minutes' % (long_queries_cnt, self.longquerymins)
+                if self.alert("LONGQUERY"):
+                    rc = self.send_alert(self.to, self.from_, subject, results2)
+                    if rc != 0:
+                        print("mail error")
+                        return 1
 
         if self.cpus > 0 or self.local:
             ######################################
@@ -880,10 +964,11 @@ class maint:
                 marker = MARK_WARN
                 subject = 'High CPU load detected.'
                 msg = "\"High number of active connections\" detected:%d  Implied load: %d%%" % (active_cnt, loadint)
-                rc = self.send_mail(self.to, self.from_, subject, msg)
-                if rc != 0:
-                    printit("mail error")
-                    return 1
+                if self.alert(ACTIVECONNS):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
+                    if rc != 0:
+                        print("mail error")
+                        return 1
             print (marker+msg)            
 
         if self.idleconnmins   > 0:
@@ -935,11 +1020,12 @@ class maint:
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
                     print ("Unable to get idle connection: %d %s\nsql=%s\n" % (rc, results2, sql2))
-                subject = '%d %s Idle connection(s) detected longer than %d minutes' % (idle_conns, self.environment, self.idleconnmins)            
-                rc = self.send_mail(self.to, self.from_, subject, results2)
-                if rc != 0:
-                    printit("mail error")
-                    return 1
+                subject = '%d Idle connection(s) detected longer than %d minutes' % (idle_conns, self.idleconnmins)            
+                if self.alert(IDLECONNS):
+                    rc = self.send_alert(self.to, self.from_, subject, results2)
+                    if rc != 0:
+                        print("mail error")
+                        return 1
             print (marker+msg)
 
         if not self.genchecks:
@@ -1055,7 +1141,7 @@ class maint:
         result = float(conns) / self.max_connections
         percentconns = int(math.floor(result * 100))
         if self.verbose:
-            print ("Max connections = %d   Current connections = %d   PctConnections = %d" % (self.max_connections, conns, percentconns))
+            print ("[****]  Max connections = %d   Current connections = %d   PctConnections = %d" % (self.max_connections, conns, percentconns))
 
         if percentconns > 80:
             # 80 percent is the hard coded threshold
@@ -1101,8 +1187,6 @@ class maint:
             temp_files = int(cols[3].strip())
             temp_bytes = int(cols[4].strip())            
 
-        #  if self.verbose:
-        #      print
         if conflicts > 0 or deadlocks > 0 or temp_files > 0:
             marker = MARK_WARN
             msg = "Database conflicts found: database=%s  conflicts=%d  deadlocks=%d  temp_files=%d  temp_bytes=%d" % (database, conflicts, deadlocks, temp_files, temp_bytes)
@@ -1119,7 +1203,8 @@ class maint:
         #       unless recovery time is not a priority and High I/O SQL workload is in which case 1 hour is reasonable.
         ###############################################################################################################
         if self.pg_type != 'rds':
-            sql = "SELECT total_checkpoints, seconds_since_start / total_checkpoints / 60 AS minutes_between_checkpoints, checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time FROM (SELECT EXTRACT(EPOCH FROM (now() - pg_postmaster_start_time())) AS seconds_since_start, (checkpoints_timed+checkpoints_req) AS total_checkpoints, checkpoints_timed, checkpoints_req, checkpoint_write_time / 1000 as checkpoint_write_time, checkpoint_sync_time / 1000 as checkpoint_sync_time FROM pg_stat_bgwriter) AS sub"
+            # use stats_reset instead of postmaster start time for determining checkpoint interval
+            sql = "SELECT total_checkpoints, seconds_since_start / total_checkpoints / 60 AS minutes_between_checkpoints, checkpoints_timed, checkpoints_req, checkpoint_write_time, checkpoint_sync_time FROM (SELECT EXTRACT(EPOCH FROM (now() - stats_reset)) AS seconds_since_start, (checkpoints_timed+checkpoints_req) AS total_checkpoints, checkpoints_timed, checkpoints_req, checkpoint_write_time / 1000 as checkpoint_write_time, checkpoint_sync_time / 1000 as checkpoint_sync_time FROM pg_stat_bgwriter) AS sub"
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
@@ -1268,8 +1353,8 @@ class maint:
             # calculate average checkpoint time
             avg_checkpoint_seconds = ((checkpoint_write_time + checkpoint_sync_time) / (checkpoints_timed + checkpoints_req))
 
-            if self.verbose:
-                msg = "chkpt_time=%d chkpt_req=%d  buff_chkpt=%d  buff_clean=%d  maxwritten_clean=%d  buff_backend=%d  buff_backend_fsync=%d  buff_alloc=%d, chkpt_req_pct=%d avg_chkpnt_write=%s total_written=%s chkpnt_write_pct=%d background_write_pct=%d  backend_write_pct=%d avg_checkpoint_time=%d seconds" \
+            if self.debug:
+                msg = "[****]  chkpt_time=%d chkpt_req=%d  buff_chkpt=%d  buff_clean=%d  maxwritten_clean=%d  buff_backend=%d  buff_backend_fsync=%d  buff_alloc=%d, chkpt_req_pct=%d avg_chkpnt_write=%s total_written=%s chkpnt_write_pct=%d background_write_pct=%d  backend_write_pct=%d avg_checkpoint_time=%d seconds" \
                 % (checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync, buffers_alloc, checkpoints_req_pct, avg_checkpoint_write, total_written, checkpoint_write_pct, background_write_pct, backend_write_pct, avg_checkpoint_seconds)
                 print (msg)
 
@@ -1478,11 +1563,23 @@ class maint:
             if pctused > 75:
                 marker = MARK_WARN
                 msg = "Data Directory Usage is high: %d%% used" % pctused
+                subject = "Data Directory Usage is high: %d%% used" % pctused
+                if self.alert(DIRSIZE):
+                    rc = self.send_alert(self.to, self.from_, subject, '')
+                    if rc != 0:
+                        print("mail error")
+                        return 1
             else:    
                 marker = MARK_OK
                 msg = "Data Directory Usage is acceptable: %d%% used" % pctused                
         print (marker+msg)
-        
+
+        #############################
+        ### Check for replication lag
+        #############################
+        #SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication;
+
+       
 
         return SUCCESS, ""
 
@@ -1511,6 +1608,7 @@ def setupOptionParser():
     parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
     parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
+    parser.add_option("-b", "--debug",          dest="debug", help="Debug Output",                              default=False, action="store_true")
     parser.add_option("-s", "--slacknotify",    dest="slacknotify", help="Slack Notifications",                 default=False, action="store_true")
     parser.add_option("-m", "--mailnotify",    dest="mailnotify", help="Mail Notifications",                    default=False, action="store_true")
 
@@ -1531,7 +1629,7 @@ pg = maint()
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
                            options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, \
-                           options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, options.slacknotify, options.mailnotify, sys.argv)
+                           options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, options.debug, options.slacknotify, options.mailnotify, sys.argv)
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
