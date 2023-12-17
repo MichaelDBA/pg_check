@@ -1,5 +1,5 @@
 # pg_check
-(c) 2018-2022 SQLEXEC LLC
+(c) 2018-2023 SQLEXEC LLC
 <br/>
 GNU V3 and MIT licenses are conveyed accordingly.
 <br/>
