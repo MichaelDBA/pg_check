@@ -8,6 +8,8 @@ Bugs can be reported @ michaeldba@sqlexec.com
 # Overview
 Based on pg_report, but only  issues email alerts and console output, no html output format.  Currently the things checked for:
 <br/>
+`PG host is accepting connections`
+<br/>
 `waiting or blocked transactions`
 <br/>
 `long running queries`
