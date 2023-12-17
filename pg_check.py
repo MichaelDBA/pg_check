@@ -82,8 +82,8 @@
 # Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
 # Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
 # Michael Vitale     12/12/2023     Major Upgrade: added slack notification method, bug fixes
-# Michael Vitale     12/13/2023     Fixed PG major and minor version checking based on latest versions.
-# Michael Vitale     12/16/2023     Enhancement: Control how often alerts are done based on history alert file.
+# Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
+# Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -112,10 +112,11 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.2
 PROGNAME   = "pg_check"
-ADATE      = "Dec 16, 2023"
-PROGDATE   = "2023-12-16"
+ADATE      = "Dec 17, 2023"
+PROGDATE   = "2023-12-17"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
+
 
 # alert notifications
 TESTALERT="TestAlert"
@@ -125,7 +126,8 @@ WAITS="Waits"
 IDLEINTRANS="IdleInTrans"
 LONGQUERY="LongQuery"
 ACTIVECONNS="ActiveConns"
-
+REPLICATION="Replication"
+PGHOSTUP="PGHostUp"
 
 #############################################################################################
 ########################### class definition ################################################
@@ -367,16 +369,7 @@ class maint:
         if pos > 0:
             self.pgbindir = results[0:pos]
 
-        rc, results = self.get_configinfo()
-        if rc != SUCCESS:
-            errors = "rc=%d results=%s" % (rc,results)
-            return rc, errors
-
-        rc, results = self.get_pgversion()
-        if rc != SUCCESS:
-            return rc, results
-
-        # get history of alerts to control current sesssion alerts
+       # get history of alerts to control current sesssion alerts
         self.alertsfile = self.programdir + '/' + 'pg_check.alerts'
         if os.path.isfile(self.alertsfile):
             # read in last 30 alerts for subsequent checking
@@ -386,10 +379,39 @@ class maint:
                     self.alertslist += [aline.strip()]
             #print("The list: " + str(self.alertslist))                     
             self.alert(TESTALERT)
-            
         else:
             #print("alerts file not found: %s" % self.alertsfile)        
             pass
+
+        # See if we can even connect to the PG host.
+        # If not, treat as PG host down warning
+        sql = 'SELECT 1'
+        cmd = "psql %s -At -X -c \"%s\" > %s" % (self.connstring, sql, self.tempfile)
+        rc, results = self.executecmd(cmd, False)
+        if rc != SUCCESS:
+            marker = MARK_WARN
+            if 'could not connect to server' in results or 'Connection refused' in results:
+                msg = 'PG Connection Refused.'
+            else:
+                msg = 'Unexpected PG Connection Error'
+            subject = msg
+            if self.alert(PGHOSTUP):
+                rc = self.send_alert(self.to, self.from_, subject, '')
+            print (marker+msg)        
+            return rc, results
+        else:
+            marker = MARK_OK
+            msg = 'PG Host is up.'
+            print (marker+msg)        
+
+        rc, results = self.get_configinfo()
+        if rc != SUCCESS:
+            errors = "rc=%d results=%s" % (rc,results)
+            return rc, errors
+
+        rc, results = self.get_pgversion()
+        if rc != SUCCESS:
+            return rc, results
 
         return SUCCESS, ''
 
@@ -425,6 +447,8 @@ class maint:
                     return True                    
                 elif msg ==WAITS:
                     return True                        
+                elif msg ==REPLICATION:
+                    return True                      
         return False
 
 
@@ -490,9 +514,9 @@ class maint:
     ###########################################################
     def get_configinfo(self):
 
-        sql = "show all"
-
         #print("conn=%s" % self.connstring)
+        sql = "show all"
+        
         cmd = "psql %s -At -X -c \"%s\" > %s" % (self.connstring, sql, self.tempfile)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
@@ -641,7 +665,7 @@ class maint:
             # print or(stderr_data)
             return rc, err
         elif values == "" and expect:
-            return ERROR3, 'return set is empty'
+            return ERROR3, '[ERROR] return set is empty'
         else:
             return SUCCESS, values
 
@@ -809,7 +833,7 @@ class maint:
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get count of blocked queries: %d %s\nsql=%s\n" % (rc, results, sql1)
+                errors = "[ERROR] Unable to get count of blocked queries."
                 return rc, errors
             blocked_queries_cnt = int(results)
             if blocked_queries_cnt == 0:
@@ -913,7 +937,7 @@ class maint:
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get count of long running queries: %d %s\nsql=%s\n" % (rc, results, sql1)
+                errors = "[ERROR] Unable to get count of long running queries."
                 return rc, errors
             long_queries_cnt = int(results)
             if long_queries_cnt == 0:
@@ -925,7 +949,7 @@ class maint:
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
-                    errors = "Unable to get long running queries: %d %s\nsql=%s\n" % (rc, results2, sql2)
+                    errors = "[ERROR] Unable to get long running queries."
                     print (errors)
                     return rc, errors
            
@@ -949,7 +973,7 @@ class maint:
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get count of active connections: %d %s\nsql=%s\n" % (rc, results, sql1)
+                errors = "[ERROR] Unable to get count of active connections."
                 return rc, errors
             active_cnt = int(results)
             # formula is (#cpus * 2) + (#cpus / 2)
@@ -1005,7 +1029,7 @@ class maint:
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get count of idle connections: %d %s\nsql=%s\n" % (rc, results, sql1)
+                errors = "[ERROR] Unable to get count of idle connections."
                 return rc, errors
             idle_conns = int(results)
 
@@ -1019,7 +1043,7 @@ class maint:
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
-                    print ("Unable to get idle connection: %d %s\nsql=%s\n" % (rc, results2, sql2))
+                    print ("[ERROR] Unable to get idle connection.")
                 subject = '%d Idle connection(s) detected longer than %d minutes' % (idle_conns, self.idleconnmins)            
                 if self.alert(IDLECONNS):
                     rc = self.send_alert(self.to, self.from_, subject, results2)
@@ -1094,7 +1118,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get database cache hit ratio: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get database cache hit ratio."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1133,7 +1157,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get count of current connections: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get count of current connections."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1171,7 +1195,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get database conflicts: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get database conflicts."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1208,7 +1232,7 @@ class maint:
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get checkpoint frequency: %d %s\nsql=%s\n" % (rc, results, sql)
+                errors = "[ERROR] Unable to get checkpoint frequency."
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
@@ -1241,7 +1265,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get configuration parameters: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get configuration parameters."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors        
@@ -1312,7 +1336,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get background/backend buffers count: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get background/backend buffers count."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors        
@@ -1328,7 +1352,7 @@ class maint:
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
-                errors = "Unable to get background/backend writers: %d %s\nsql=%s\n" % (rc, results, sql)
+                errors = "[ERROR] Unable to get background/backend writers."
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
@@ -1432,7 +1456,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get table/index bloat count: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get table/index bloat count."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1456,7 +1480,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get unused indexes count: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get unused indexes count."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1479,7 +1503,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get average connection time: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get average connection time."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1505,7 +1529,7 @@ class maint:
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
-            errors = "Unable to get vacuum freeze candidate count: %d %s\nsql=%s\n" % (rc, results, sql)
+            errors = "[ERROR] Unable to get vacuum freeze candidate count."
             aline = "%s" % (errors)
             self.writeout(aline)
             return rc, errors
@@ -1553,33 +1577,62 @@ class maint:
         # get sizes for datadir and pg_wal.
         # for now treat pg_wal as being under the same mount point as datadir
         #select sum(size) from pg_ls_waldir()
-        cmd = "df -h %s | tail -n1 | awk '{print($5)}' | cut -d'%%' -f1" % self.datadir
-        rc, results = self.executecmd(cmd, True)
-        if rc != SUCCESS:
-            print ("Unable to get directory sizes.")
+        if self.local:
+          cmd = "df -h %s | tail -n1 | awk '{print($5)}' | cut -d'%%' -f1" % self.datadir
+          rc, results = self.executecmd(cmd, True)
+          if rc != SUCCESS:
+              print ("[ERROR] Unable to get directory sizes.")
+          else:
+              #print ("df -h results = %s" % results)
+              pctused = int(results)
+              if pctused > 75:
+                  marker = MARK_WARN
+                  msg = "Data Directory Usage is high: %d%% used" % pctused
+                  subject = "Data Directory Usage is high: %d%% used" % pctused
+                  if self.alert(DIRSIZE):
+                      rc = self.send_alert(self.to, self.from_, subject, '')
+                      if rc != 0:
+                          print("mail error")
+                          return 1
+              else:    
+                  marker = MARK_OK
+                  msg = "Data Directory Usage is acceptable: %d%% used" % pctused                
         else:
-            #print ("df -h results = %s" % results)
-            pctused = int(results)
-            if pctused > 75:
-                marker = MARK_WARN
-                msg = "Data Directory Usage is high: %d%% used" % pctused
-                subject = "Data Directory Usage is high: %d%% used" % pctused
-                if self.alert(DIRSIZE):
-                    rc = self.send_alert(self.to, self.from_, subject, '')
-                    if rc != 0:
-                        print("mail error")
-                        return 1
-            else:    
-                marker = MARK_OK
-                msg = "Data Directory Usage is acceptable: %d%% used" % pctused                
+          marker = MARK_OK
+          msg = "N/A  PG Host is remote. No server file usage is available."
         print (marker+msg)
-
-        #############################
-        ### Check for replication lag
-        #############################
-        #SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication;
-
-       
+        
+        #######################################################
+        ### Check for streaming mode replication associated lag
+        #######################################################
+        sql = "SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication"
+        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
+        rc, results = self.executecmd(cmd, False)
+        if rc != SUCCESS:
+            errors = "[ERROR] Unable to get replication info."
+            aline = "%s" % (errors)
+            self.writeout(aline)
+            return rc, errors
+        
+        if results == "":
+            # no active replication detected
+            marker = MARK_WARN
+            subject = "No active streaming replication detected."
+            if self.alert(REPLICATION):
+                rc = self.send_alert(self.to, self.from_, subject, '')
+        elif int(results) == 0:
+            # no SR lag
+            marker = MARK_OK
+            msg = "Active replication with no lag."
+        elif int(results) < 10:
+            marker = MARK_OK
+            msg = "Active replication with slight lag: %s seconds."
+        else:
+            marker = MARK_WARN
+            subject = "Active replication with noticeable lag: %s seconds."
+            if self.alert(REPLICATION):
+                rc = self.send_alert(self.to, self.from_, subject, '')
+        print (marker+msg)        
 
         return SUCCESS, ""
 
@@ -1626,6 +1679,9 @@ optionParser   = setupOptionParser()
 # load the instance
 pg = maint()
 
+print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" \
+       % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
+
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
                            options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, \
@@ -1633,11 +1689,8 @@ rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, optio
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
-    optionParser.print_help()
+    #optionParser.print_help()
     sys.exit(1)
-
-print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" \
-       % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
 
 #print ("globals=%s" % globals())
 #print ("locals=%s" % locals())
