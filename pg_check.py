@@ -1062,8 +1062,9 @@ class maint:
                         return 1
             print (marker+msg)
 
-        if not self.genchecks:
-            return SUCCESS, ""
+        # Dec. 19, 2023 don't know why I stopped here, so disregard this input parameter for now
+        #if not self.genchecks
+        #    return SUCCESS, ""
                         
         #####################################
         # analyze pg major and minor versions
