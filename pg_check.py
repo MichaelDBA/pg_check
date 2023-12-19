@@ -160,6 +160,10 @@ class maint:
         self.connected         = False
         self.slacknotify       = False
         self.mailnotify        = False
+        self.checkreplication  = False
+        self.checkpgbouncer    = False
+        self.checkpgbackrest   = False
+        
         # slack hook found in users home dir/.slackhook file
         hookfile = os.path.expanduser("~") + '/.slackhook'
         with open(hookfile) as f:
@@ -235,22 +239,24 @@ class maint:
         return rc
     
     ###########################################################
-    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, environment, testmode, verbose, debug, slacknotify, mailnotify, argv):
-        self.waitslocks      = waitslocks
-        self.dbhost          = dbhost
-        self.dbport          = dbport
-        self.dbuser          = dbuser
-        self.database        = database
-        self.schema          = schema
-        self.genchecks       = genchecks
-        self.environment     = environment
-        self.testmode        = testmode
-        self.verbose         = verbose        
-        self.debug           = debug
-
-        self.slacknotify     = slacknotify
-        self.mailnotify      = mailnotify
-        
+    def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, \
+                   environment, testmode, verbose, debug, slacknotify, mailnotify, checkreplication, checkpgbouncer, checkpgbackrest, argv):
+        self.waitslocks       = waitslocks
+        self.dbhost           = dbhost
+        self.dbport           =  dbport
+        self.dbuser           = dbuser
+        self.database         = database
+        self.schema           = schema
+        self.genchecks        = genchecks
+        self.environment      = environment
+        self.testmode         = testmode
+        self.verbose          = verbose        
+        self.debug            = debug
+        self.slacknotify      = slacknotify
+        self.mailnotify       = mailnotify
+        self.checkreplication = checkreplication
+        self.checkpgbouncer   = checkpgbouncer
+        self.checkpgbackrest  = checkpgbackrest
         
         if waitslocks == -999:
             #print("waitslocks not passed")
@@ -1609,163 +1615,162 @@ class maint:
         #######################################################
         ### Check for streaming mode replication associated lag
         #######################################################
-        sql = "SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication"
-        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
-        rc, results = self.executecmd(cmd, False)
-        if rc != SUCCESS:
-            errors = "[ERROR] Unable to get replication info."
-            aline = "%s" % (errors)
-            self.writeout(aline)
-            return rc, errors
+        if self.checkreplication:
+            sql = "SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication"
+            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
+            rc, results = self.executecmd(cmd, False)
+            if rc != SUCCESS:
+                errors = "[ERROR] Unable to get replication info."
+                aline = "%s" % (errors)
+                self.writeout(aline)
+                return rc, errors
         
-        if results == "":
-            # no active replication detected
-            marker = MARK_WARN
-            msg = "No active streaming replication detected."
-            subject = "No active streaming replication detected."
-            if self.alert(REPLICATION):
-                rc = self.send_alert(self.to, self.from_, subject, '')
-        elif int(results) == 0:
-            # no SR lag
-            marker = MARK_OK
-            msg = "Active replication with no lag."
-        elif int(results) < 10:
-            marker = MARK_OK
-            msg = "Active replication with slight lag: %s seconds."
-        else:
-            marker = MARK_WARN
-            msg = "Active replication with noticeable lag: %s seconds."            
-            subject = "Active replication with noticeable lag: %s seconds."
-            if self.alert(REPLICATION):
-                rc = self.send_alert(self.to, self.from_, subject, '')
-        print (marker+msg)        
+            if results == "":
+                # no active replication detected
+                marker = MARK_WARN
+                msg = "No active streaming replication detected."
+                subject = "No active streaming replication detected."
+                if self.alert(REPLICATION):
+                    rc = self.send_alert(self.to, self.from_, subject, '')
+            elif int(results) == 0:
+                # no SR lag
+                marker = MARK_OK
+                msg = "Active replication with no lag."
+            elif int(results) < 10:
+                marker = MARK_OK
+                msg = "Active replication with slight lag: %s seconds."
+            else:
+                marker = MARK_WARN
+                msg = "Active replication with noticeable lag: %s seconds."            
+                subject = "Active replication with noticeable lag: %s seconds."
+                if self.alert(REPLICATION):
+                    rc = self.send_alert(self.to, self.from_, subject, '')
+            print (marker+msg)        
 
 
         #######################################
         ### Check for PGBouncer Warnings/Errors
         #######################################
-        
-        # see if pgbouncer is running
-        #ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v '\-\-color=auto' |  awk '{ print $2 }'
-        cmd = "ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v 'grep' |  awk '{ print $2 }'"
-        rc, results = self.executecmd(cmd, True)
-        if rc != SUCCESS:
-            errors = "%s\n" % (results)
-            aline = "%s" % (errors)
-            self.writeout(aline)
-            return rc, errors
-        pid = results.strip()       
-        if pid.isnumeric():
-            marker = MARK_OK
-            msg = 'PGBouncer is running.'
-        else:
-            marker = MARK_WARN
-            subject = "PGBouncer is not running"
-            msg = "PGBouncer is not running"
-            rc = self.send_alert(self.to, self.from_, subject, msg)
-        print (marker+msg)                      
-        
+        if self.checkpgbouncer:        
+            # see if pgbouncer is running
+            #ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v '\-\-color=auto' |  awk '{ print $2 }'
+            cmd = "ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v 'grep' |  awk '{ print $2 }'"
+            rc, results = self.executecmd(cmd, True)
+            if rc != SUCCESS:
+                errors = "%s\n" % (results)
+                aline = "%s" % (errors)
+                self.writeout(aline)
+                return rc, errors
+            pid = results.strip()       
+            if pid.isnumeric():
+                marker = MARK_OK
+                msg = 'PGBouncer is running.'
+            else:
+                marker = MARK_WARN
+                subject = "PGBouncer is not running"
+                msg = "PGBouncer is not running"
+                rc = self.send_alert(self.to, self.from_, subject, msg)
+            print (marker+msg)                      
        
-        # requires execute, read permissions on the pgbouncer log file
-        #2023-12-17 03:21:46.320 EST [16494] WARNING C-0x124c458: table_management/pgappuser@unix(16494):6432 pooler error: client_login_timeout (server down)
-        #2023-12-19 06:56:08.976 EST [14799] WARNING C-0x180d3e0: (nodb)/(nouser)@10.2.220.218:42172 unsupported startup parameter: replication=true
-        logfile = '/var/log/pgbouncer/pgbouncer.log'
-        cmd = "grep 'WARNING' " + logfile + " | tail -1"
-        rc, results = self.executecmd(cmd, True)
-        if rc != SUCCESS:
-            errors = "%s\n" % (results)
-            aline = "%s" % (errors)
-            self.writeout(aline)
-            return rc, errors
+            # requires execute, read permissions on the pgbouncer log file
+            #2023-12-17 03:21:46.320 EST [16494] WARNING C-0x124c458: table_management/pgappuser@unix(16494):6432 pooler error: client_login_timeout (server down)
+            #2023-12-19 06:56:08.976 EST [14799] WARNING C-0x180d3e0: (nodb)/(nouser)@10.2.220.218:42172 unsupported startup parameter: replication=true
+            logfile = '/var/log/pgbouncer/pgbouncer.log'
+            cmd = "grep 'WARNING' " + logfile + " | tail -1"
+            rc, results = self.executecmd(cmd, True)
+            if rc != SUCCESS:
+                errors = "%s\n" % (results)
+                aline = "%s" % (errors)
+                self.writeout(aline)
+                return rc, errors
         
-        #print("pgbouncer results: %s" % results)
-        parsed = results.split('EST')
-        adatetimestr = parsed[0].strip()
-        # chop off the microseconds
-        adatetimestr = adatetimestr[:-4]       
+            #print("pgbouncer results: %s" % results)
+            parsed = results.split('EST')
+            adatetimestr = parsed[0].strip()
+            # chop off the microseconds
+            adatetimestr = adatetimestr[:-4]       
         
-        # fake a warning
-        #adatetimestr="2023-12-19 08:30:00"
-        #print("adatetimestr=%s" % adatetimestr)        
-        adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")        
-        msg = parsed[1].strip()
-        # check for  password authentication failed messages and ignore
-        if 'password authentication failed' in msg:
-            # we ignore these bad password warnings
-            marker = MARK_OK
-            msg = 'No PGBouncer Warnings Found.'
-            print (marker+msg)              
-        else:
-            dt1 = datetime.now()
-            diff = dt1 - adatetimeobj 
-            secs = diff.seconds 
-            # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
-            if secs < 129:
+            # fake a warning
+            #adatetimestr="2023-12-19 08:30:00"
+            #print("adatetimestr=%s" % adatetimestr)        
+            adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")        
+            msg = parsed[1].strip()
+            # check for  password authentication failed messages and ignore
+            if 'password authentication failed' in msg:
+                # we ignore these bad password warnings
+                marker = MARK_OK
+                msg = 'No PGBouncer Warnings Found.'
+                print (marker+msg)              
+            else:
+                dt1 = datetime.now()
+                diff = dt1 - adatetimeobj 
+                secs = diff.seconds 
+                # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
+                if secs < 120:
+                    marker = MARK_WARN
+                    subject = "PGBouncer Warning"
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
+                else:
+                    marker = MARK_OK
+                    msg = 'No PGBouncer Warnings Found.'
+                print (marker+msg)        
+
+            # now start checking PGBouncer show commands assuming they are available through PG as external views
+            cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
+            rc, results = self.executecmd(cmd, True)
+            if rc != SUCCESS:
+                errors = "%s\n" % (results)
+                aline = "%s" % (errors)
+                self.writeout(aline)
+                return rc, errors
+        
+            waits = int(results)
+            if waits > 0:
                 marker = MARK_WARN
                 subject = "PGBouncer Warning"
+                msg = "Clients waiting for connections (%d)" % waits
                 rc = self.send_alert(self.to, self.from_, subject, msg)
             else:
                 marker = MARK_OK
-                msg = 'No PGBouncer Warnings Found.'
+                msg = 'No PGBouncer clients waiting for PG connections.'
             print (marker+msg)        
-
-        # now start checking PGBouncer show commands assuming they are available through PG as external views
-        cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
-        rc, results = self.executecmd(cmd, True)
-        if rc != SUCCESS:
-            errors = "%s\n" % (results)
-            aline = "%s" % (errors)
-            self.writeout(aline)
-            return rc, errors
         
-        waits = int(results)
-        if waits > 0:
-            marker = MARK_WARN
-            subject = "PGBouncer Warning"
-            msg = "Clients waiting for connections (%d)" % waits
-            rc = self.send_alert(self.to, self.from_, subject, msg)
-        else:
-            marker = MARK_OK
-            msg = 'No PGBouncer clients waiting for PG connections.'
-        print (marker+msg)        
-        
-        #Show free clients and servers that are close to zero.
-        #select count(*) free_clients from pgbouncer.lists where list = 'free_clients' and items < 5;
-        #select count(*) free_servers from pgbouncer.lists where list = 'free_servers' and items < 5;
-        
-        #Show caches that are low in free memory.
-        #select name, size, free, round(round((free/size::decimal)::decimal,2) * 100) percent_free from pgbouncer.mem where  round(round((free/size::decimal)::decimal,2) * 100) < 10;
+            #Show free clients and servers that are close to zero.
+            #select count(*) free_clients from pgbouncer.lists where list = 'free_clients' and items < 5;
+            #select count(*) free_servers from pgbouncer.lists where list = 'free_servers' and items < 5;
+            #Show caches that are low in free memory.
+            #select name, size, free, round(round((free/size::decimal)::decimal,2) * 100) percent_free from pgbouncer.mem where  round(round((free/size::decimal)::decimal,2) * 100) < 10;
 
 
         ###############################
         ### Check for PGBackrest Errors
         ###############################
+        if self.checkpgbackrest:
+            # check repo's last line in the log file.  /var/log/pgbackrest/certship-backup.log
+            # It should be something like this:
+            #2023-12-19 02:00:22.027 P00   INFO: backup command end: completed successfully (20837ms)
         
-        # check repo's last line in the log file.  /var/log/pgbackrest/certship-backup.log
-        # It should be something like this:
-        #2023-12-19 02:00:22.027 P00   INFO: backup command end: completed successfully (20837ms)
+            # also check output from pgbackrest info command to see date of last backup to see if was yesterday or today
+            #pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }' --> 2023-12-19
+            cmd = "pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }'"
+            rc, results = self.executecmd(cmd, True)
+            if rc != SUCCESS:
+                errors = "%s\n" % (results)
+                aline = "%s" % (errors)
+                self.writeout(aline)
+                return rc, errors
         
-        # also check output from pgbackrest info command to see date of last backup to see if was yesterday or today
-        #pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }' --> 2023-12-19
-        cmd = "pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }'"
-        rc, results = self.executecmd(cmd, True)
-        if rc != SUCCESS:
-            errors = "%s\n" % (results)
-            aline = "%s" % (errors)
-            self.writeout(aline)
-            return rc, errors
-        
-        #print("pgbackrest results = %s" % results)
-        # consider old if older than 2 days
-        if datetime.strptime(results, "%Y-%m-%d") + timedelta(days=2) < datetime.today():
-            marker = MARK_WARN
-            subject = "PGBackrest Warning"
-            msg = "Last backup is older than 2 days (%s) " % results
-            rc = self.send_alert(self.to, self.from_, subject, msg)        
-        else:
-            marker = MARK_OK
-            msg = 'Latest PGBackrest date is less than 2 days old: %s' % results
-        print (marker+msg)        
+            #print("pgbackrest results = %s" % results)
+            # consider old if older than 2 days
+            if datetime.strptime(results, "%Y-%m-%d") + timedelta(days=2) < datetime.today():
+                marker = MARK_WARN
+                subject = "PGBackrest Warning"
+                msg = "Last backup is older than 2 days (%s) " % results
+                rc = self.send_alert(self.to, self.from_, subject, msg)        
+            else:
+                marker = MARK_OK
+                msg = 'Latest PGBackrest date is less than 2 days old: %s' % results
+            print (marker+msg)        
         
 
         return SUCCESS, ""
@@ -1797,7 +1802,12 @@ def setupOptionParser():
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
     parser.add_option("-b", "--debug",          dest="debug", help="Debug Output",                              default=False, action="store_true")
     parser.add_option("-s", "--slacknotify",    dest="slacknotify", help="Slack Notifications",                 default=False, action="store_true")
-    parser.add_option("-m", "--mailnotify",    dest="mailnotify", help="Mail Notifications",                    default=False, action="store_true")
+    parser.add_option("-m", "--mailnotify",     dest="mailnotify", help="Mail Notifications",                   default=False, action="store_true")
+    
+    parser.add_option("-r", "--checkreplication", dest="checkreplication", help="Check Replication",            default=False, action="store_true")
+    parser.add_option("-x", "--checkpgbouncer",   dest="checkpgbouncer",   help="Check PGBouncer",              default=False, action="store_true")
+    parser.add_option("-y", "--checkpgbackrest",  dest="checkpgbackrest",  help="Check PGBackrest",             default=False, action="store_true")
+    
 
     return parser
 
@@ -1816,7 +1826,8 @@ pg = maint()
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
                            options.genchecks, options.waitslocks, options.longquerymins, options.idleintransmins, \
-                           options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, options.debug, options.slacknotify, options.mailnotify, sys.argv)
+                           options.idleconnmins,  options.cpus, options.environment, options.testmode, options.verbose, \
+                           options.debug, options.slacknotify, options.mailnotify, options.checkreplication, options.checkpgbouncer, options.checkpgbackrest, sys.argv)
 if rc != SUCCESS:
     print (errors)
     pg.cleanup()
