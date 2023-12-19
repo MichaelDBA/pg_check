@@ -84,11 +84,11 @@
 # Michael Vitale     12/12/2023     v1.3 Major Upgrade: added slack notification method, bug fixes
 # Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
-# Michael Vitale     12/19/2023     Enhancement: Add PGBouncer checks
+# Michael Vitale     12/19/2023     Enhancement: Add PGBouncer and PGBackrest checks
 ################################################################################################################
 import string, sys, os, time
 #import datetime
-from datetime import datetime
+from datetime import datetime, timedelta
 from datetime import date
 
 import tempfile, platform, math
@@ -1735,6 +1735,37 @@ class maint:
         
         #Show caches that are low in free memory.
         #select name, size, free, round(round((free/size::decimal)::decimal,2) * 100) percent_free from pgbouncer.mem where  round(round((free/size::decimal)::decimal,2) * 100) < 10;
+
+
+        ###############################
+        ### Check for PGBackrest Errors
+        ###############################
+        
+        # check repo's last line in the log file.  /var/log/pgbackrest/certship-backup.log
+        # It should be something like this:
+        #2023-12-19 02:00:22.027 P00   INFO: backup command end: completed successfully (20837ms)
+        
+        # also check output from pgbackrest info command to see date of last backup to see if was yesterday or today
+        #pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }' --> 2023-12-19
+        cmd = "pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }'"
+        rc, results = self.executecmd(cmd, True)
+        if rc != SUCCESS:
+            errors = "%s\n" % (results)
+            aline = "%s" % (errors)
+            self.writeout(aline)
+            return rc, errors
+        
+        #print("pgbackrest results = %s" % results)
+        # consider old if older than 2 days
+        if datetime.strptime(results, "%Y-%m-%d") + timedelta(days=2) < datetime.today():
+            marker = MARK_WARN
+            subject = "PGBackrest Warning"
+            msg = "Last backup is older than 2 days (%s) " % results
+            rc = self.send_alert(self.to, self.from_, subject, msg)        
+        else:
+            marker = MARK_OK
+            msg = 'Latest PGBackrest date is less than 2 days old: %s' % results
+        print (marker+msg)        
         
 
         return SUCCESS, ""
