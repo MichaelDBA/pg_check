@@ -1644,6 +1644,28 @@ class maint:
         #######################################
         ### Check for PGBouncer Warnings/Errors
         #######################################
+        
+        # see if pgbouncer is running
+        #ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v '\-\-color=auto' |  awk '{ print $2 }'
+        cmd = "ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v 'grep' |  awk '{ print $2 }'"
+        rc, results = self.executecmd(cmd, True)
+        if rc != SUCCESS:
+            errors = "%s\n" % (results)
+            aline = "%s" % (errors)
+            self.writeout(aline)
+            return rc, errors
+        pid = results.strip()       
+        if pid.isnumeric():
+            marker = MARK_OK
+            msg = 'PGBouncer is running.'
+        else:
+            marker = MARK_WARN
+            subject = "PGBouncer is not running"
+            msg = "PGBouncer is not running"
+            rc = self.send_alert(self.to, self.from_, subject, msg)
+        print (marker+msg)                      
+        
+       
         # requires execute, read permissions on the pgbouncer log file
         #2023-12-17 03:21:46.320 EST [16494] WARNING C-0x124c458: table_management/pgappuser@unix(16494):6432 pooler error: client_login_timeout (server down)
         #2023-12-19 06:56:08.976 EST [14799] WARNING C-0x180d3e0: (nodb)/(nouser)@10.2.220.218:42172 unsupported startup parameter: replication=true
@@ -1667,19 +1689,25 @@ class maint:
         #print("adatetimestr=%s" % adatetimestr)        
         adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")        
         msg = parsed[1].strip()
-
-        dt1 = datetime.now()
-        diff = dt1 - adatetimeobj 
-        secs = diff.seconds 
-        # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
-        if secs < 129:
-            marker = MARK_WARN
-            subject = "PGBouncer Warning"
-            rc = self.send_alert(self.to, self.from_, subject, msg)
-        else:
+        # check for  password authentication failed messages and ignore
+        if 'password authentication failed' in msg:
+            # we ignore these bad password warnings
             marker = MARK_OK
             msg = 'No PGBouncer Warnings Found.'
-        print (marker+msg)        
+            print (marker+msg)              
+        else:
+            dt1 = datetime.now()
+            diff = dt1 - adatetimeobj 
+            secs = diff.seconds 
+            # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
+            if secs < 129:
+                marker = MARK_WARN
+                subject = "PGBouncer Warning"
+                rc = self.send_alert(self.to, self.from_, subject, msg)
+            else:
+                marker = MARK_OK
+                msg = 'No PGBouncer Warnings Found.'
+            print (marker+msg)        
 
         # now start checking PGBouncer show commands assuming they are available through PG as external views
         cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
