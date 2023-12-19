@@ -40,8 +40,8 @@ You need to put the slack webhook into a specific file location: **UserHomeDirec
 <br/>It looks like this: <br/>https://hooks.slack.com/services/ "somekeyvalue without the quotes and leading space"
 
 # Typical usage: 
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD -m <br/>
-pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD -s
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -w -l 60 -i 30 -c 48 -e PROD -m -r -x -y <br/>
+pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD -s 
 <br/><br/>
 `-w 5 `     --> WAITS and LOCKS checking greater than number of seconds provided
 <br/>
@@ -55,12 +55,14 @@ pg_check.py -h localhost -p 5432 -U sysdba -d mydb -o 2440 -e PROD -s
 <br/>
 `-e PROD` --> User Context for PG instances that shows up in email subject line
 <br/>
+`-r`      --> Check Replication
+<br/>
+`-x`      --> Check PGBouncer
+<br/>
+`-y`      --> Check PGBackrest
+<br/>
 `-m`      --> Send Mail Notifications
 <br/>
 `-s`      --> Send Slack Notifications
-
-
-
-
 
 
