@@ -25,6 +25,8 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 `Streaming replication state`
 <br/>
 `PGBouncer state`
+<br/>
+`PGBackrest last backup state`
 
 
 <br/><br/>
