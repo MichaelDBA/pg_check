@@ -81,9 +81,10 @@
 # Michael Vitale     09/27/2021     Added new functionality for idle connections
 # Michael Vitale     09/28/2021     filter out DataFileRead-IO as a considered wait condition
 # Michael Vitale     05/29/2022     detect cpu automatically if localhost and report it.
-# Michael Vitale     12/12/2023     Major Upgrade: added slack notification method, bug fixes
+# Michael Vitale     12/12/2023     v1.3 Major Upgrade: added slack notification method, bug fixes
 # Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
+# Michael Vitale     12/19/2023     Enhancement: Add PGBouncer checks
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -110,10 +111,10 @@ NOTICE    = 2
 TOOLONG   = 3
 HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
-VERSION    = 1.2
+VERSION    = 1.3
 PROGNAME   = "pg_check"
-ADATE      = "Dec 17, 2023"
-PROGDATE   = "2023-12-17"
+ADATE      = "Dec 19, 2023"
+PROGDATE   = "2023-12-19"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -383,6 +384,18 @@ class maint:
             #print("alerts file not found: %s" % self.alertsfile)        
             pass
 
+        rc, results = self.get_configinfo()
+        if rc != SUCCESS:
+            errors = "rc=%d results=%s" % (rc,results)
+            return rc, errors
+
+        rc, results = self.get_pgversion()
+        if rc != SUCCESS:
+            return rc, results
+
+        print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" \
+               % (PROGNAME, VERSION, ADATE, sys.version_info[0], self.pgversionminor, self.local, self.database))
+
         # See if we can even connect to the PG host.
         # If not, treat as PG host down warning
         sql = 'SELECT 1'
@@ -403,15 +416,6 @@ class maint:
             marker = MARK_OK
             msg = 'PG Host is up.'
             print (marker+msg)        
-
-        rc, results = self.get_configinfo()
-        if rc != SUCCESS:
-            errors = "rc=%d results=%s" % (rc,results)
-            return rc, errors
-
-        rc, results = self.get_pgversion()
-        if rc != SUCCESS:
-            return rc, results
 
         return SUCCESS, ''
 
@@ -1617,6 +1621,7 @@ class maint:
         if results == "":
             # no active replication detected
             marker = MARK_WARN
+            msg = "No active streaming replication detected."
             subject = "No active streaming replication detected."
             if self.alert(REPLICATION):
                 rc = self.send_alert(self.to, self.from_, subject, '')
@@ -1629,10 +1634,80 @@ class maint:
             msg = "Active replication with slight lag: %s seconds."
         else:
             marker = MARK_WARN
+            msg = "Active replication with noticeable lag: %s seconds."            
             subject = "Active replication with noticeable lag: %s seconds."
             if self.alert(REPLICATION):
                 rc = self.send_alert(self.to, self.from_, subject, '')
         print (marker+msg)        
+
+
+        #######################################
+        ### Check for PGBouncer Warnings/Errors
+        #######################################
+        # requires execute, read permissions on the pgbouncer log file
+        #2023-12-17 03:21:46.320 EST [16494] WARNING C-0x124c458: table_management/pgappuser@unix(16494):6432 pooler error: client_login_timeout (server down)
+        #2023-12-19 06:56:08.976 EST [14799] WARNING C-0x180d3e0: (nodb)/(nouser)@10.2.220.218:42172 unsupported startup parameter: replication=true
+        logfile = '/var/log/pgbouncer/pgbouncer.log'
+        cmd = "grep 'WARNING' " + logfile + " | tail -1"
+        rc, results = self.executecmd(cmd, True)
+        if rc != SUCCESS:
+            errors = "%s\n" % (results)
+            aline = "%s" % (errors)
+            self.writeout(aline)
+            return rc, errors
+        
+        #print("pgbouncer results: %s" % results)
+        parsed = results.split('EST')
+        adatetimestr = parsed[0].strip()
+        # chop off the microseconds
+        adatetimestr = adatetimestr[:-4]       
+        
+        # fake a warning
+        #adatetimestr="2023-12-19 08:30:00"
+        #print("adatetimestr=%s" % adatetimestr)        
+        adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")        
+        msg = parsed[1].strip()
+
+        dt1 = datetime.now()
+        diff = dt1 - adatetimeobj 
+        secs = diff.seconds 
+        # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
+        if secs < 129:
+            marker = MARK_WARN
+            subject = "PGBouncer Warning"
+            rc = self.send_alert(self.to, self.from_, subject, msg)
+        else:
+            marker = MARK_OK
+            msg = 'No PGBouncer Warnings Found.'
+        print (marker+msg)        
+
+        # now start checking PGBouncer show commands assuming they are available through PG as external views
+        cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
+        rc, results = self.executecmd(cmd, True)
+        if rc != SUCCESS:
+            errors = "%s\n" % (results)
+            aline = "%s" % (errors)
+            self.writeout(aline)
+            return rc, errors
+        
+        waits = int(results)
+        if waits > 0:
+            marker = MARK_WARN
+            subject = "PGBouncer Warning"
+            msg = "Clients waiting for connections (%d)" % waits
+            rc = self.send_alert(self.to, self.from_, subject, msg)
+        else:
+            marker = MARK_OK
+            msg = 'No PGBouncer clients waiting for PG connections.'
+        print (marker+msg)        
+        
+        #Show free clients and servers that are close to zero.
+        #select count(*) free_clients from pgbouncer.lists where list = 'free_clients' and items < 5;
+        #select count(*) free_servers from pgbouncer.lists where list = 'free_servers' and items < 5;
+        
+        #Show caches that are low in free memory.
+        #select name, size, free, round(round((free/size::decimal)::decimal,2) * 100) percent_free from pgbouncer.mem where  round(round((free/size::decimal)::decimal,2) * 100) < 10;
+        
 
         return SUCCESS, ""
 
@@ -1678,9 +1753,6 @@ optionParser   = setupOptionParser()
 
 # load the instance
 pg = maint()
-
-print ("%s  version: %.1f  %s     Python Version: %d     PG Version: %s  local detected=%r   PG Database: %s\n\n" \
-       % (PROGNAME, VERSION, ADATE, sys.version_info[0], pg.pgversionminor, pg.local, pg.database))
 
 # Load and validate parameters
 rc, errors = pg.set_dbinfo(options.dbhost, options.dbport, options.dbuser, options.database, options.schema, \
