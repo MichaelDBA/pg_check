@@ -23,6 +23,9 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 `Data Directory size > 75%`
 <br/>
 `Streaming replication state`
+<br/>
+`PGBouncer state`
+
 
 <br/><br/>
 
