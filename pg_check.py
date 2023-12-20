@@ -84,7 +84,7 @@
 # Michael Vitale     12/12/2023     v1.3 Major Upgrade: added slack notification method, bug fixes
 # Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
-# Michael Vitale     12/19/2023     Enhancement: Add PGBouncer and PGBackrest checks
+# Michael Vitale     12/20/2023     Enhancement: Add PGBouncer and PGBackrest checks
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -113,20 +113,28 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.3
 PROGNAME   = "pg_check"
-ADATE      = "Dec 19, 2023"
-PROGDATE   = "2023-12-19"
+ADATE      = "Dec 20, 2023"
+PROGDATE   = "2023-12-20"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
 
 # alert notifications
 TESTALERT="TestAlert"
-DIRSIZE  ="DirSize"
+DIRSIZE="DirSize"
 IDLECONNS="IdleConns"
 WAITS="Waits"
 IDLEINTRANS="IdleInTrans"
 LONGQUERY="LongQuery"
 ACTIVECONNS="ActiveConns"
+LOAD1="Load1"
+LOAD5="Load5"
+LOAD15="Load15"
+PGBOUNCER1="PGBouncer1"
+PGBOUNCER2="PGBouncer2"
+PGBOUNCER3="PGBouncer3"
+PGBACKREST1="PGBackrest1"
+
 REPLICATION="Replication"
 PGHOSTUP="PGHostUp"
 
@@ -453,6 +461,12 @@ class maint:
                     return True
                 elif msg ==ACTIVECONNS:
                     return True
+                elif msg ==LOAD1:
+                    return True
+                elif msg ==LOAD5:
+                    return True
+                elif msg ==LOAD15:
+                    return True                    
                 elif msg ==DIRSIZE:
                     return True                    
                 elif msg ==WAITS:
@@ -974,11 +988,59 @@ class maint:
                         return 1
 
         if self.cpus > 0 or self.local:
-            ######################################
-            # Get cpu load info
-            # db.r5.12xlarge = 48
-            ######################################
+            #################################################
+            # Get cpu load info based on top and active conns
+            #################################################
 
+            # get load averages for 1, 5 and 15 minute intervals
+            cmd = "uptime"
+            rc, results = self.executecmd(cmd, True)
+            if rc != 0:
+                errors = "[ERROR] Unable to get linux load info"
+                return rc, errors
+        
+            # output will look like this -->  12:34:25 up 53 days, 16:18,  6 users,  load average: 1.45, 1.61, 1.67
+            #                                 20:21:12 up 55 days, 10 min,  9 users,  load average: 1.27, 1.50, 1.52
+            threshold = 0.9 * self.cpus
+            parts  = results.split()
+            atime  = parts[0].strip()
+            index = 0
+            for apart in parts:
+                if 'average' in apart:
+                    load1  = parts[index + 1].strip()
+                    load1  = load1.replace(',','')
+                    load1rnd = round(Decimal(load1),2)
+                    load5  = parts[index + 2].strip()
+                    load5  = load5.replace(',','')
+                    load5rnd = round(Decimal(load5),2)
+                    load15 = parts[index + 3].strip()
+                    load15rnd = round(Decimal(load15),2)
+                    break
+                index = index + 1            
+                
+            if load1rnd > threshold:
+                marker = MARK_WARN
+                subject = "High Load Detected."
+                msg = "1 minute load > 90%% value=%.2f" % load1rnd
+                if self.alert(LOAD1):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
+            elif load5rnd > threshold:
+                marker = MARK_WARN
+                subject = "High Load Detected."
+                msg = "5 minute load > 90%% value=%.2f" % load5rnd
+                if self.alert(LOAD5):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)                    
+            elif load15rnd > threshold:
+                marker = MARK_WARN
+                subject = "High Load Detected."
+                msg = "15 minute load > 90%% value=%.2f" % load15rnd
+                if self.alert(LOAD15):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)                                        
+            else:
+                marker = MARK_OK
+                msg = "1 minute load < 90%% value=%.2f" % load1rnd
+            print (marker+msg)            
+            
             sql = "select count(*) as active from pg_stat_activity where state in ('active', 'idle in transaction')"
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
@@ -1670,7 +1732,8 @@ class maint:
                 marker = MARK_WARN
                 subject = "PGBouncer is not running"
                 msg = "PGBouncer is not running"
-                rc = self.send_alert(self.to, self.from_, subject, msg)
+                if self.alert(PGBOUNCER1):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
             print (marker+msg)                      
        
             # requires execute, read permissions on the pgbouncer log file
@@ -1710,7 +1773,8 @@ class maint:
                 if secs < 120:
                     marker = MARK_WARN
                     subject = "PGBouncer Warning"
-                    rc = self.send_alert(self.to, self.from_, subject, msg)
+                    if self.alert(PGBOUNCER2):                    
+                        rc = self.send_alert(self.to, self.from_, subject, msg)
                 else:
                     marker = MARK_OK
                     msg = 'No PGBouncer Warnings Found.'
@@ -1730,7 +1794,8 @@ class maint:
                 marker = MARK_WARN
                 subject = "PGBouncer Warning"
                 msg = "Clients waiting for connections (%d)" % waits
-                rc = self.send_alert(self.to, self.from_, subject, msg)
+                if self.alert(PGBOUNCER3):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
             else:
                 marker = MARK_OK
                 msg = 'No PGBouncer clients waiting for PG connections.'
@@ -1767,7 +1832,8 @@ class maint:
                 marker = MARK_WARN
                 subject = "PGBackrest Warning"
                 msg = "Last backup is older than 2 days (%s) " % results
-                rc = self.send_alert(self.to, self.from_, subject, msg)        
+                if self.alert(PGBACKREST1):
+                    rc = self.send_alert(self.to, self.from_, subject, msg)        
             else:
                 marker = MARK_OK
                 msg = 'Latest PGBackrest date is less than 2 days old: %s' % results
