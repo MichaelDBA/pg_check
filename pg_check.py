@@ -240,7 +240,10 @@ class maint:
         if self.slacknotify:
           if self.verbose:
               print ("[****]  sending to slack...")
-          msg2 = self.environment + '  ' + subject + ':' + body
+          if body == '':
+              msg2 = self.environment + '  ' + subject
+          else:
+              msg2 = self.environment + '  ' + subject + ':' + body
           msg = 'curl --location "' + self.slackhook + '" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
           rc = os.system(msg)
           
