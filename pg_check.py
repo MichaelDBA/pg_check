@@ -243,7 +243,7 @@ class maint:
           msg2 = self.environment + '  ' + subject + ':' + body
           msg = 'curl --location "' + self.slackhook + '" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
           rc = os.system(msg)
-          #print (msg)
+          
         return rc
     
     ###########################################################
@@ -455,6 +455,10 @@ class maint:
             dt1 = datetime.now()
             diff = dt1 - adatetimeobj 
             secs = diff.seconds 
+            
+            # log the alert
+            self.log_alert(msg)
+            
             # only alert on certain types of conditions
             if secs > self.alertmaxsecs:
                 if msg == TESTALERT:
@@ -473,9 +477,24 @@ class maint:
                     return True                        
                 elif msg ==REPLICATION:
                     return True                      
+                elif msg ==IDLEINTRANS:
+                    return True        
+                elif msg ==LONGQUERY:
+                    return True                            
+                elif msg ==PGBOUNCER1:
+                    return True                            
+                elif msg ==PGBOUNCER2:
+                    return True                            
+                elif msg ==PGBOUNCER3:
+                    return True        
+                elif msg ==PGBACKREST1:
+                    return True        
+                elif msg ==PGHOSTUP:
+                    return True                            
+
         return False
 
-
+          
 
     ###########################################################
     def cleanup(self):
