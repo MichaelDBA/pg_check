@@ -18,6 +18,8 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 <br/>
 `Idle connections`
 <br/>
+`Linux Load state`
+<br/>
 `High number of active connections relative to number of CPUs`
 <br/>
 `Data Directory size > 75%`
