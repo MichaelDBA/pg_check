@@ -29,8 +29,6 @@ Based on pg_report, but only  issues email alerts and console output, no html ou
 `PGBouncer state`
 <br/>
 `PGBackrest last backup state`
-
-
 <br/><br/>
 
 # Requirements
