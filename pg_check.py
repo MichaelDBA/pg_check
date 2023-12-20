@@ -486,8 +486,7 @@ class maint:
                     return True                            
                 elif msg ==PGBOUNCER1:
                     return True                            
-                elif msg ==PGBOUNCER2:
-                    return True                            
+                # skip PGBOUNCER2                     
                 elif msg ==PGBOUNCER3:
                     return True        
                 elif msg ==PGBACKREST1:
@@ -1771,6 +1770,8 @@ class maint:
                 return rc, errors
         
             #print("pgbouncer results: %s" % results)
+            ##### uncomment the following and change date to current time + 1 minute to test the warning
+            #####results = "2023-12-20 17:55:01.449 EST [3471] WARNING C-0x12a3230: (nodb)/dynatracereadonly@127.0.0.1:49738 pooler error: no such database: eventstore"
             parsed = results.split('EST')
             adatetimestr = parsed[0].strip()
             # chop off the microseconds
@@ -1792,15 +1793,17 @@ class maint:
                 diff = dt1 - adatetimeobj 
                 secs = diff.seconds 
                 # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
+                #print("pgbouncer results: %s" % results)
+                #print ("secs=%d" % (secs))
                 if secs < 120:
                     marker = MARK_WARN
                     subject = "PGBouncer Warning"
-                    if self.alert(PGBOUNCER2):                    
-                        rc = self.send_alert(self.to, self.from_, subject, msg)
+                    #if self.alert(PGBOUNCER2):                  
+                    rc = self.send_alert(self.to, self.from_, subject, results)
                 else:
                     marker = MARK_OK
                     msg = 'No PGBouncer Warnings Found.'
-                print (marker+msg)        
+                print (marker+msg) 
 
             # now start checking PGBouncer show commands assuming they are available through PG as external views
             cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
