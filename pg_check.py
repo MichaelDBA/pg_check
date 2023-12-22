@@ -84,7 +84,8 @@
 # Michael Vitale     12/12/2023     v1.3 Major Upgrade: added slack notification method, bug fixes
 # Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
-# Michael Vitale     12/20/2023     Enhancement: Add PGBouncer and PGBackrest checks
+# Michael Vitale     12/21/2023     Enhancement: Add PGBouncer and PGBackrest checks
+# Michael Vitale     12/22/2023     Enhancement: Add warnings from current PG log file (local only)
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -113,8 +114,8 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.3
 PROGNAME   = "pg_check"
-ADATE      = "Dec 20, 2023"
-PROGDATE   = "2023-12-20"
+ADATE      = "Dec 22, 2023"
+PROGDATE   = "2023-12-22"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -196,8 +197,8 @@ class maint:
         self.programdir        = ''
         self.alertsfile        = ''
         self.alertslist        = []
-        # default is 1 hour
-        self.alertmaxsecs      = 3600
+        # default is 15 mins
+        self.alertmaxsecs      = 900
 
         self.slaves            = []
         self.slavecnt          = 0
@@ -235,8 +236,6 @@ class maint:
             if self.verbose:
                 print ("[****]  sending email...")
             rc = os.system(msg)
-            #if rc == 0:
-            #    print("email sent successfully.")
         if self.slacknotify:
           if self.verbose:
               print ("[****]  sending to slack...")
@@ -245,8 +244,9 @@ class maint:
           else:
               msg2 = self.environment + '  ' + subject + ':' + body
           msg = 'curl --location "' + self.slackhook + '" --header "Content-Type: application/json" --data "{\"text\": \\"' + msg2 + '\\"}"'
+          # weird "ok" string printed as output from os.system call, so route to /dev/null
+          msg = msg + ">/dev/null 2>&1"
           rc = os.system(msg)
-          
         return rc
     
     ###########################################################
@@ -396,7 +396,6 @@ class maint:
                 for aline in (file.readlines() [-30:]):
                     self.alertslist += [aline.strip()]
             #print("The list: " + str(self.alertslist))                     
-            self.alert(TESTALERT)
         else:
             #print("alerts file not found: %s" % self.alertsfile)        
             pass
@@ -450,51 +449,82 @@ class maint:
     ###########################################################
     def alert(self, msg):
         #print("msg=%s" % msg)
+        doit = False
+        noalerts = True
+        dt1 = datetime.now()
+        
         for alert in self.alertslist:
+            noalerts = False
             parts = alert.split('*')
             adatetimestr = parts[0].strip()
             adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")
             analert   = parts[1].strip()
-            dt1 = datetime.now()
+            if analert != msg:
+                continue
             diff = dt1 - adatetimeobj 
             secs = diff.seconds 
             
-            # log the alert
-            self.log_alert(msg)
-            
             # only alert on certain types of conditions
+            if self.debug:
+                print("alert checking with analert=%s  seconds=%d and max seconds=%d..." % (analert, secs,self.alertmaxsecs))
             if secs > self.alertmaxsecs:
+                if self.debug:
+                    print("alert qualifies")
                 if msg == TESTALERT:
-                    return True
+                    doit = True
                 elif msg ==ACTIVECONNS:
-                    return True
+                    doit = True
                 elif msg ==LOAD1:
-                    return True
+                    doit = True
                 elif msg ==LOAD5:
-                    return True
+                    doit = True
                 elif msg ==LOAD15:
-                    return True                    
+                    doit = True
                 elif msg ==DIRSIZE:
-                    return True                    
+                    doit = True
                 elif msg ==WAITS:
-                    return True                        
+                    doit = True
                 elif msg ==REPLICATION:
-                    return True                      
+                    doit = True
                 elif msg ==IDLEINTRANS:
-                    return True        
+                    doit = True
                 elif msg ==LONGQUERY:
-                    return True                            
+                    doit = True
                 elif msg ==PGBOUNCER1:
-                    return True                            
+                    doit = True
                 # skip PGBOUNCER2                     
                 elif msg ==PGBOUNCER3:
-                    return True        
+                    doit = True
                 elif msg ==PGBACKREST1:
-                    return True        
+                    doit = True
                 elif msg ==PGHOSTUP:
-                    return True                            
-
-        return False
+                    doit = True
+            else:
+                # found but does not qualify
+                doit = False              
+                if self.debug:
+                    print("alert not qualified")
+                
+        if noalerts:
+            # no alerts in alert file so alert
+            doit = True
+            # log the alert
+            self.log_alert(msg) 
+            if self.debug:
+                print("no alerts found. Do alert...")                    
+            return True
+            
+        if doit:
+            if self.debug:
+                print("do alert...")        
+            # log the alert
+            self.log_alert(msg)                
+            return True
+        else:
+            if self.debug:
+                print("alert bypassed...")        
+            return False
+        
 
           
 
@@ -1731,6 +1761,16 @@ class maint:
                     rc = self.send_alert(self.to, self.from_, subject, '')
             print (marker+msg)        
 
+        #############################################
+        ### Check for PG Warnings/Errors from its log
+        #############################################
+        if self.local:
+            pass    
+            # cat current_logfiles | awk '{print($2)}' --> log/postgresql-Thu.log
+            #select * from  pg_current_logfile();   --> log/postgresql-Thu.log
+
+        
+
 
         #######################################
         ### Check for PGBouncer Warnings/Errors
@@ -1857,6 +1897,14 @@ class maint:
                 marker = MARK_WARN
                 subject = "PGBackrest Warning"
                 msg = "Last backup is older than 2 days (%s) " % results
+
+                # get additional details
+                #ssh Q-LAB-PG-BACKUP "tail -n 7 /var/log/pgbackrest/certship-backup.log"
+                #ssh Q-LAB-PG-BACKUP "grep -A7 'PROCESS START' /var/log/pgbackrest/certship-backup.log | tail -7"                    
+                cmd = "ssh Q-LAB-PG-BACKUP \"grep -A7 'PROCESS START' /var/log/pgbackrest/certship-backup.log | tail -7\""
+                rc, results = self.executecmd(cmd, True)                    
+                if rc == SUCCESS:
+                    msg = msg + "\n" + results
                 if self.alert(PGBACKREST1):
                     rc = self.send_alert(self.to, self.from_, subject, msg)        
             else:
