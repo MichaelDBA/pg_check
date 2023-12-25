@@ -37,7 +37,8 @@ Python, psql command line tool, postfix service
 # Gotchas
 Make sure mailx is installed.<br/>
 Make sure postfix service is running.<br/>
-Make sure there is room for logging mail to root file (/var/spool/mail/root).  Consider max size from default=50MB.<br/>
+Make sure there is room for logging mail to root file (**/var/spool/mail/root**).  Consider max size from default=50MB.<br/>
+Tail **/var/log/maillog** for errors.<br/>
 
 # Slack Setup: 
 You need to put the slack webhook into a specific file location: **UserHomeDirectory/.slackhook**
