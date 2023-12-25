@@ -32,8 +32,7 @@ Based on pg_report, but only  issues email alerts/slack channel msgs and console
 <br/><br/>
 
 # Requirements
-Python, psql command line tool
-<br/><br/>
+Python, psql command line tool, postfix service
 
 # Slack Setup: 
 You need to put the slack webhook into a specific file location: **UserHomeDirectory/.slackhook**
