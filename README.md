@@ -34,6 +34,11 @@ Based on pg_report, but only  issues email alerts/slack channel msgs and console
 # Requirements
 Python, psql command line tool, postfix service
 
+# Gotchas
+Make sure mailx is installed.<br/>
+Make sure postfix service is running.<br/>
+Make sure there is room for logging mail to root file (/var/spool/mail/root).  Consider max size from default=50MB.<br/>
+
 # Slack Setup: 
 You need to put the slack webhook into a specific file location: **UserHomeDirectory/.slackhook**
 <br/>It looks like this: <br/>https://hooks.slack.com/services/ "somekeyvalue without the quotes and leading space"
