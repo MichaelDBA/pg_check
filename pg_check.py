@@ -1,4 +1,4 @@
-#!/usr/bin/env python3 
+#!/usr/bin/env python3
 #!/usr/bin/env python2
 #!/usr/bin/env python
 #!/usr/bin/python
@@ -85,7 +85,7 @@
 # Michael Vitale     12/16/2023     Fixed PG major and minor version checking based on latest versions.
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
 # Michael Vitale     12/21/2023     Enhancement: Add PGBouncer and PGBackrest checks
-# Michael Vitale     12/22/2023     Enhancement: Add warnings from current PG log file (local only)
+# Michael Vitale     12/26/2023     Enhancement: Add warnings from current PG log file (local only)
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -114,8 +114,8 @@ HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
 VERSION    = 1.3
 PROGNAME   = "pg_check"
-ADATE      = "Dec 22, 2023"
-PROGDATE   = "2023-12-22"
+ADATE      = "Dec 26, 2023"
+PROGDATE   = "2023-12-26"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -144,13 +144,13 @@ PGHOSTUP="PGHostUp"
 #############################################################################################
 class maint:
     def __init__(self):
-    
+
         self.dateprogstr       = PROGDATE
         self.dateprog          = datetime.strptime(PROGDATE, "%Y-%m-%d")
         self.datenowstr        = datetime.now().strftime("%Y-%m-%d")
         self.datenow           = datetime.today()
         self.datediff          = self.datenow - self.dateprog
-        
+
         self.genchechs         = ''
         self.waitslocks        = -1
         self.longquerymins     = -1
@@ -172,7 +172,7 @@ class maint:
         self.checkreplication  = False
         self.checkpgbouncer    = False
         self.checkpgbackrest   = False
-        
+
         # slack hook found in users home dir/.slackhook file
         hookfile = os.path.expanduser("~") + '/.slackhook'
         with open(hookfile) as f:
@@ -193,7 +193,7 @@ class maint:
         self.tempdir           = tempfile.gettempdir()
         self.pgbindir          = ''
         self.pgversionmajor    = Decimal('0.0')
-        self.pgversionminor    = '0.0'        
+        self.pgversionminor    = '0.0'
         self.programdir        = ''
         self.alertsfile        = ''
         self.alertslist        = []
@@ -213,6 +213,7 @@ class maint:
         self.archive_mode      = ''
         self.max_connections   = -1
         self.datadir           = ''
+        self.logdir            = ''
         self.waldir            = ''
         self.shared_buffers    = -1
         self.work_mem          = -1
@@ -248,7 +249,7 @@ class maint:
           msg = msg + ">/dev/null 2>&1"
           rc = os.system(msg)
         return rc
-    
+
     ###########################################################
     def set_dbinfo(self, dbhost, dbport, dbuser, database, schema, genchecks, waitslocks, longquerymins, idleintransmins, idleconnmins, cpus, \
                    environment, testmode, verbose, debug, slacknotify, mailnotify, checkreplication, checkpgbouncer, checkpgbackrest, argv):
@@ -261,14 +262,14 @@ class maint:
         self.genchecks        = genchecks
         self.environment      = environment
         self.testmode         = testmode
-        self.verbose          = verbose        
+        self.verbose          = verbose
         self.debug            = debug
         self.slacknotify      = slacknotify
         self.mailnotify       = mailnotify
         self.checkreplication = checkreplication
         self.checkpgbouncer   = checkpgbouncer
         self.checkpgbackrest  = checkpgbackrest
-        
+
         if waitslocks == -999:
             #print("waitslocks not passed")
             pass
@@ -308,7 +309,7 @@ class maint:
             return ERROR, "Invalid idleintransmins provided: %s" % idleintransmins
         else:
             self.idleintransmins = idleintransmins
-            
+
         if idleconnmins == -999:
             #print("idleconnmins not passed")
             pass
@@ -316,7 +317,7 @@ class maint:
             return ERROR, "Invalid idleconnmins provided: %s" % idleconnmins
         else:
             self.idleconnmins = idleconnmins
-        
+
         if self.testmode:
             #self.to  = 'michaeldba@sqlexec.com '
             self.to  = 'michael.vitale@capgemini.com'
@@ -324,7 +325,7 @@ class maint:
         else:
             #self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
             self.to  = 'michael.vitale@capgemini.com'
-             
+
 
         # process the schema or table elements
         total   = len(argv)
@@ -338,7 +339,7 @@ class maint:
             self.dir_delim = '\\'
         else:
             return ERROR, "Unsupported platform."
-            
+
         self.workfile          = "%s%s%s_stats.sql" % (self.tempdir, self.dir_delim, self.pid)
         self.workfile_deferred = "%s%s%s_stats_deferred.sql" % (self.tempdir, self.dir_delim, self.pid)
         self.tempfile          = "%s%s%s_temp.sql" % (self.tempdir, self.dir_delim, self.pid)
@@ -395,9 +396,9 @@ class maint:
             with open(self.alertsfile) as file:
                 for aline in (file.readlines() [-30:]):
                     self.alertslist += [aline.strip()]
-            #print("The list: " + str(self.alertslist))                     
+            #print("The list: " + str(self.alertslist))
         else:
-            #print("alerts file not found: %s" % self.alertsfile)        
+            #print("alerts file not found: %s" % self.alertsfile)
             pass
 
         rc, results = self.get_configinfo()
@@ -426,12 +427,12 @@ class maint:
             subject = msg
             if self.alert(PGHOSTUP):
                 rc = self.send_alert(self.to, self.from_, subject, '')
-            print (marker+msg)        
+            print (marker+msg)
             return rc, results
         else:
             marker = MARK_OK
             msg = 'PG Host is up.'
-            print (marker+msg)        
+            print (marker+msg)
 
         return SUCCESS, ''
 
@@ -452,7 +453,7 @@ class maint:
         doit = False
         noalerts = True
         dt1 = datetime.now()
-        
+
         for alert in self.alertslist:
             noalerts = False
             parts = alert.split('*')
@@ -461,9 +462,9 @@ class maint:
             analert   = parts[1].strip()
             if analert != msg:
                 continue
-            diff = dt1 - adatetimeobj 
-            secs = diff.seconds 
-            
+            diff = dt1 - adatetimeobj
+            secs = diff.seconds
+
             # only alert on certain types of conditions
             if self.debug:
                 print("alert checking with analert=%s  seconds=%d and max seconds=%d..." % (analert, secs,self.alertmaxsecs))
@@ -492,7 +493,7 @@ class maint:
                     doit = True
                 elif msg ==PGBOUNCER1:
                     doit = True
-                # skip PGBOUNCER2                     
+                # skip PGBOUNCER2
                 elif msg ==PGBOUNCER3:
                     doit = True
                 elif msg ==PGBACKREST1:
@@ -501,32 +502,32 @@ class maint:
                     doit = True
             else:
                 # found but does not qualify
-                doit = False              
+                doit = False
                 if self.debug:
                     print("alert not qualified")
-                
+
         if noalerts:
             # no alerts in alert file so alert
             doit = True
             # log the alert
-            self.log_alert(msg) 
+            self.log_alert(msg)
             if self.debug:
-                print("no alerts found. Do alert...")                    
+                print("no alerts found. Do alert...")
             return True
-            
+
         if doit:
             if self.debug:
-                print("do alert...")        
+                print("do alert...")
             # log the alert
-            self.log_alert(msg)                
+            self.log_alert(msg)
             return True
         else:
             if self.debug:
-                print("alert bypassed...")        
+                print("alert bypassed...")
             return False
-        
 
-          
+
+
 
     ###########################################################
     def cleanup(self):
@@ -591,7 +592,7 @@ class maint:
 
         #print("conn=%s" % self.connstring)
         sql = "show all"
-        
+
         cmd = "psql %s -At -X -c \"%s\" > %s" % (self.connstring, sql, self.tempfile)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
@@ -613,7 +614,7 @@ class maint:
             # v2.2 fix: things like "Timing is On" can appear as a line so bypass
             if aline == 'Timing is on.' or aline == 'Timing is off.' or aline == 'Pager usage is off.' or aline == 'Pager is used for long output.' or ':activity' in aline or 'Time: ' in aline:
                 continue
-                
+
             # print ("DEBUG:  aline=%s" % (aline))
             fields = aline.split('|')
             name = fields[0].strip()
@@ -623,16 +624,18 @@ class maint:
             if name == 'data_directory':
                 self.datadir = setting
                 if self.pgversionmajor > Decimal('9.6'):
-                    self.waldir = "%s/pg_wal" % self.datadir                
+                    self.waldir = "%s/pg_wal" % self.datadir
                 else:
-                    self.waldir = "%s/pg_xlog" % self.datadir        
-                
+                    self.waldir = "%s/pg_xlog" % self.datadir
+
                 # for pg rds version, 9.6,  "show all" command does not have shared_preload_libraries! so rely on data_directory instead
                 if 'rdsdbdata' in self.datadir:
-                    self.pg_type = 'rds'                
+                    self.pg_type = 'rds'
                 # heroku indicator using aws in the background
                 elif self.datadir == '/database':
-                    self.pg_type = 'rds'                
+                    self.pg_type = 'rds'
+            elif name == 'log_directory':
+                self.logdir = setting
             elif name == 'archive_mode':
                 self.archive_mode = setting
             elif name == 'max_connections':
@@ -659,7 +662,7 @@ class maint:
             elif name == 'shared_preload_libraries':
                 # we only care that it is loaded, not necessarily created
                 # for pg rds version, 9.6,  "show all" command does not have shared_preload_libraries! so rely on data_directory instead
-                self.shared_preload_libraries = setting  
+                self.shared_preload_libraries = setting
                 if 'rdsutils' in self.shared_preload_libraries:
                     self.pg_type = 'rds'
             elif name == 'rds.extensions':
@@ -713,7 +716,7 @@ class maint:
         else:
             # python 3 returns values and err in byte format so convert accordingly
             err = bytes(err2).decode('utf-8')
-            
+
         if values2 is None or len(values2) == 0:
             values = ""
         else:
@@ -721,7 +724,7 @@ class maint:
             values = bytes(values2).decode('utf-8')
 
         values = values.strip()
-                
+
         rc = p.returncode
         if self.debug:
             print ("[****]  rc=%d  values=***%s***  errors=***%s***" % (rc, values, err))
@@ -752,7 +755,7 @@ class maint:
         #sql = "select substring(foo.version from 12 for 3) from (select version() as major) foo, substring(version(), 12, position(' ' in substring(version(),12))) as minor"
         #sql = "select substring(version(), 12, position(' ' in substring(version(),12)))"
         sql = "select  trim(substring(version(), 12, position(' ' in substring(version(),12)))) || '-' || substring(foo.major from 12 for 3)as major  from (select version() as major) foo"
-        
+
         # do not provide host name and/or port if not provided
         cmd = "psql %s -At -X -c \"%s\" " % (self.connstring, sql)
         rc, results = self.executecmd(cmd, True)
@@ -767,33 +770,33 @@ class maint:
         # values = bytes(values2).decode('utf-8')
         results = str(results)
         parsed = results.split('-')
-        
+
         amajor = parsed[1]
         self.pgversionminor = parsed[0]
-        
+
         pos = amajor.find('.')
         if pos == -1:
             # must be a beta or rc candidate version starting at version 10 since the current version is 10rc1
             self.pgversionmajor =  Decimal(amajor[:2])
         else:
             self.pgversionmajor = Decimal(amajor)
-        
+
         #print ("majorversion = %.1f  minorversion = %s" % (self.pgversionmajor, self.pgversionminor))
         return SUCCESS, str(results)
 
     ###########################################################
     def get_readycnt(self):
-        
+
         # we cannot handle cloud types like AWS RDS
         if self.pg_type == 'rds':
             return SUCCESS, '0'
-        
+
         # version 10 replaces pg_xlog with pg_wal directory
         if self.pgversionmajor > Decimal('9.6'):
-            xlogdir = "%s/pg_wal/archive_status" % self.datadir                
+            xlogdir = "%s/pg_wal/archive_status" % self.datadir
         else:
-            xlogdir = "%s/pg_xlog/archive_status" % self.datadir        
-        
+            xlogdir = "%s/pg_xlog/archive_status" % self.datadir
+
         sql = "select count(*) from (select pg_ls_dir from pg_ls_dir('%s') where pg_ls_dir ~ E'^[0-9A-F]{24}.ready$') as foo" % xlogdir
 
         # do not provide host name and/or port if not provided
@@ -867,8 +870,8 @@ class maint:
                 print("mail error")
                 return ERROR, ''
             self.log_alert(TESTALERT)
-            print (marker+msg)            
-            
+            print (marker+msg)
+
 
 
         if self.waitslocks > 0:
@@ -904,7 +907,7 @@ class maint:
                     "blocking_locks.transactionid IS NOT DISTINCT FROM blocked_locks.transactionid AND blocking_locks.classid IS NOT DISTINCT FROM blocked_locks.classid AND blocking_locks.objid IS NOT DISTINCT " \
                     "FROM blocked_locks.objid AND blocking_locks.objsubid IS NOT DISTINCT FROM blocked_locks.objsubid AND blocking_locks.pid != blocked_locks.pid " \
                     "JOIN pg_catalog.pg_stat_activity blocking_activity ON blocking_activity.pid = blocking_locks.pid WHERE NOT blocked_locks.GRANTED"
-                    
+
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
@@ -920,17 +923,17 @@ class maint:
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql2)
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
-                    print ("Unable to get waiting or blocked queries(A): %d %s\nsql=%s\n" % (rc, results2, sql2))            
+                    print ("Unable to get waiting or blocked queries(A): %d %s\nsql=%s\n" % (rc, results2, sql2))
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql3)
                 rc, results3 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
                     print ("Unable to get waiting or blocked queries(B): %d %s\nsql=%s\n" % (rc, results2, sql3))
-                    
+
                 subject = '%d Waiting/BLocked SQL(s) Detected' % (blocked_queries_cnt)
                 if results2 is None or results2.strip() == '':
                     results2 = ''
                 if results3 is None or results3.strip() == '':
-                    results3 = ''                    
+                    results3 = ''
                 if self.debug:
                     print("[****]  results2=%s" % results2)
                     print("[****]  results3=%s" % results3)
@@ -950,7 +953,7 @@ class maint:
                             print("mail error")
                             return 1
             print (marker+msg)
-            
+
         if self.idleintransmins   > 0:
             #######################################################################
             # get existing "idle in transaction" connections longer than 10 minutes
@@ -983,7 +986,7 @@ class maint:
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
                     print ("Unable to get idle in transaction queries: %d %s\nsql=%s\n" % (rc, results2, sql2))
-                subject = '%d Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.idleintransmins)            
+                subject = '%d Idle In Trans SQL(s) detected longer than %d minutes' % (idle_in_transaction_cnt, self.idleintransmins)
                 if self.alert(IDLEINTRANS):
                     rc = self.send_alert(self.to, self.from_, subject, results2)
                     if rc != 0:
@@ -1027,10 +1030,10 @@ class maint:
                     errors = "[ERROR] Unable to get long running queries."
                     print (errors)
                     return rc, errors
-           
+
                 marker = MARK_WARN
                 msg = "%d \"long running queries\" longer than %d minutes were detected." % (long_queries_cnt, self.longquerymins)
-                print (marker+msg)      
+                print (marker+msg)
                 subject = '%d Long Running SQL(s) Detected longer than %d minutes' % (long_queries_cnt, self.longquerymins)
                 if self.alert("LONGQUERY"):
                     rc = self.send_alert(self.to, self.from_, subject, results2)
@@ -1049,7 +1052,7 @@ class maint:
             if rc != 0:
                 errors = "[ERROR] Unable to get linux load info"
                 return rc, errors
-        
+
             # output will look like this -->  12:34:25 up 53 days, 16:18,  6 users,  load average: 1.45, 1.61, 1.67
             #                                 20:21:12 up 55 days, 10 min,  9 users,  load average: 1.27, 1.50, 1.52
             threshold = 0.9 * self.cpus
@@ -1067,8 +1070,8 @@ class maint:
                     load15 = parts[index + 3].strip()
                     load15rnd = round(Decimal(load15),2)
                     break
-                index = index + 1            
-                
+                index = index + 1
+
             if load1rnd > threshold:
                 marker = MARK_WARN
                 subject = "High Load Detected."
@@ -1080,18 +1083,18 @@ class maint:
                 subject = "High Load Detected."
                 msg = "5 minute load > 90%% value=%.2f" % load5rnd
                 if self.alert(LOAD5):
-                    rc = self.send_alert(self.to, self.from_, subject, msg)                    
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
             elif load15rnd > threshold:
                 marker = MARK_WARN
                 subject = "High Load Detected."
                 msg = "15 minute load > 90%% value=%.2f" % load15rnd
                 if self.alert(LOAD15):
-                    rc = self.send_alert(self.to, self.from_, subject, msg)                                        
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
             else:
                 marker = MARK_OK
                 msg = "1 minute load < 90%% value=%.2f" % load1rnd
-            print (marker+msg)            
-            
+            print (marker+msg)
+
             sql = "select count(*) as active from pg_stat_activity where state in ('active', 'idle in transaction')"
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
@@ -1116,7 +1119,7 @@ class maint:
                     if rc != 0:
                         print("mail error")
                         return 1
-            print (marker+msg)            
+            print (marker+msg)
 
         if self.idleconnmins   > 0:
             #############################################################
@@ -1131,16 +1134,16 @@ class maint:
                 # NOTE: filter condition based on IMO customization for "ggs"
                 sql1 = \
                     "select count(*) from pg_stat_activity where state = 'idle' and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > %d" % self.idleconnmins
-                    
-                '''                    
-                select 'pid=' || pid || '  db=' || coalesce(datname,'N/A') || '  user=' || coalesce(usename, 'N/A') || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  state=idle' || 
-                '  backend_type=' || (case when backend_type = 'logical replication launcher' then 'logical rep launcher' when backend_type = 'autovacuum launcher' then 'autovac launcher' when backend_type = 'autovacuum worker' then 'autovac wrkr' else backend_type end) || 
-                '  backend_start=' || to_char(backend_start, 'YYYY-MM-DD HH24:MI:SS') || 
-                '  conn mins=' || cast(EXTRACT(EPOCH FROM (now() - backend_start)) / 60 as integer) || 
-                '  idle mins=' || cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 as idle_mins 
+
+                '''
+                select 'pid=' || pid || '  db=' || coalesce(datname,'N/A') || '  user=' || coalesce(usename, 'N/A') || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  state=idle' ||
+                '  backend_type=' || (case when backend_type = 'logical replication launcher' then 'logical rep launcher' when backend_type = 'autovacuum launcher' then 'autovac launcher' when backend_type = 'autovacuum worker' then 'autovac wrkr' else backend_type end) ||
+                '  backend_start=' || to_char(backend_start, 'YYYY-MM-DD HH24:MI:SS') ||
+                '  conn mins=' || cast(EXTRACT(EPOCH FROM (now() - backend_start)) / 60 as integer) ||
+                '  idle mins=' || cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 as idle_mins
                 FROM pg_stat_activity WHERE state in ('idle') and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > 200 order by cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) desc;
-                '''                    
-                
+                '''
+
                 sql2 = \
                     "select 'pid=' || pid || '  db=' || coalesce(datname,'N/A') || '  user=' || coalesce(usename, 'N/A') || '  app=' || coalesce(application_name, 'N/A') || '  clientip=' || client_addr || '  state=idle' || " \
                     " '  backend_type=' || (case when backend_type = 'logical replication launcher' then 'logical rep launcher' when backend_type = 'autovacuum launcher' then 'autovac launcher' when backend_type = 'autovacuum worker' then 'autovac wrkr' else backend_type end) || " \
@@ -1148,7 +1151,7 @@ class maint:
                     " '  conn mins=' || cast(EXTRACT(EPOCH FROM (now() - backend_start)) / 60 as integer) || " \
                     " '  idle mins=' || cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 as idle_mins " \
                     " FROM pg_stat_activity WHERE state in ('idle') and usename <> 'ggs' and cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) / 60 > %d order by cast(EXTRACT(EPOCH FROM (now() - state_change)) as integer) desc" % self.idleconnmins
-                
+
                 cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql1)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
@@ -1167,7 +1170,7 @@ class maint:
                 rc, results2 = self.executecmd(cmd, False)
                 if rc != SUCCESS:
                     print ("[ERROR] Unable to get idle connection.")
-                subject = '%d Idle connection(s) detected longer than %d minutes' % (idle_conns, self.idleconnmins)            
+                subject = '%d Idle connection(s) detected longer than %d minutes' % (idle_conns, self.idleconnmins)
                 if self.alert(IDLECONNS):
                     rc = self.send_alert(self.to, self.from_, subject, results2)
                     if rc != 0:
@@ -1178,25 +1181,25 @@ class maint:
         # Dec. 19, 2023 don't know why I stopped here, so disregard this input parameter for now
         #if not self.genchecks
         #    return SUCCESS, ""
-                        
+
         #####################################
         # analyze pg major and minor versions
         #####################################
         if self.pgversionmajor < Decimal('11.0'):
             marker = MARK_WARN
             msg = "Unsupported major version detected: %.1f.  Please upgrade ASAP." % self.pgversionmajor
-            html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"            
+            html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         elif self.pgversionmajor < Decimal('16.0'):
-            marker = MARK_WARN        
+            marker = MARK_WARN
             msg = "Current PG major version (%s) is not the latest.  Consider upgrading to 16." % self.pgversionmajor
-            html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"                        
+            html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         else:
-            marker = MARK_OK        
-            msg = "Current PG major version (%s) is the latest.  No major upgrade necessary." % self.pgversionmajor        
-            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"blue\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"blue\">" + msg + "</font></td></tr>"        
+            marker = MARK_OK
+            msg = "Current PG major version (%s) is the latest.  No major upgrade necessary." % self.pgversionmajor
+            html = "<tr><td width=\"5%\"><font color=\"blue\">&#10004;</font></td><td width=\"20%\"><font color=\"blue\">PG Major Version Summary</font></td><td width=\"75%\"><font color=\"blue\">" + msg + "</font></td></tr>"
 
-        print (marker+msg)        
-        
+        print (marker+msg)
+
         # latest versions: 16.1, 15.5, 14.10, 13.13, 12.17, 11.22, 10.23, 9.6.24
         #print("latest version: %s" % self.pgversionmajor)
         if self.pgversionmajor > Decimal('9.5'):
@@ -1208,31 +1211,31 @@ class maint:
                 marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to last minor version, 9.6.24." % self.pgversionminor
             elif self.pgversionmajor == Decimal('10.0') and self.pgversionminor < '10.23':
-                marker = MARK_WARN        
+                marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to last minor version, 10.23." % self.pgversionminor
             elif self.pgversionmajor == Decimal('11.0') and self.pgversionminor < '11.22':
-                marker = MARK_WARN        
+                marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to latest minor version, 11.22." % self.pgversionminor
             elif self.pgversionmajor == Decimal('12.0') and self.pgversionminor < '12.17':
-                marker = MARK_WARN        
+                marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to latest minor version, 12.17." % self.pgversionminor
             elif self.pgversionmajor == Decimal('13.0') and self.pgversionminor < '13.13':
-                marker = MARK_WARN        
+                marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to latest minor version, 13.13." % self.pgversionminor
             elif self.pgversionmajor == Decimal('14.0') and self.pgversionminor < '14.10':
-                marker = MARK_WARN        
+                marker = MARK_WARN
                 msg = "Current version: %s.  Please upgrade to latest minor version, 14.10." % self.pgversionminor
             elif self.pgversionmajor == Decimal('15.0') and self.pgversionminor < '15.5':
-                marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 15.5." % self.pgversionminor                
+                marker = MARK_WARN
+                msg = "Current version: %s.  Please upgrade to latest minor version, 15.5." % self.pgversionminor
             elif self.pgversionmajor == Decimal('16.0') and self.pgversionminor < '16.1':
-                marker = MARK_WARN        
-                msg = "Current version: %s.  Please upgrade to latest minor version, 16.1." % self.pgversionminor                
+                marker = MARK_WARN
+                msg = "Current version: %s.  Please upgrade to latest minor version, 16.1." % self.pgversionminor
             else:
-                marker = MARK_OK        
-                msg = "Current PG minor version is the latest (%s). No minor upgrade necessary." % self.pgversionminor        
+                marker = MARK_OK
+                msg = "Current PG minor version is the latest (%s). No minor upgrade necessary." % self.pgversionminor
 
-            print (marker+msg)                
+            print (marker+msg)
 
         #####################
         # get cache hit ratio
@@ -1254,7 +1257,7 @@ class maint:
             marker = MARK_WARN
             msg = "low cache hit ratio: %.2f (blocks hit vs blocks read)" % cache_ratio
         elif cache_ratio < Decimal('90.0'):
-            marker = MARK_WARN        
+            marker = MARK_WARN
             msg = "Moderate cache hit ratio: %.2f (blocks hit vs blocks read)" % cache_ratio
         else:
             marker = MARK_OK
@@ -1293,7 +1296,7 @@ class maint:
 
         if percentconns > 80:
             # 80 percent is the hard coded threshold
-            marker = MARK_WARN        
+            marker = MARK_WARN
             msg = "Current connections (%d) are greater than 80%% of max connections (%d) " % (conns, self.max_connections)
             html = "<tr><td width=\"5%\"><font color=\"red\">&#10060;</font></td><td width=\"20%\"><font color=\"red\">Connections</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
         else:
@@ -1333,7 +1336,7 @@ class maint:
         if len(cols) > 2:
             deadlocks  = int(cols[2].strip())
             temp_files = int(cols[3].strip())
-            temp_bytes = int(cols[4].strip())            
+            temp_bytes = int(cols[4].strip())
 
         if conflicts > 0 or deadlocks > 0 or temp_files > 0:
             marker = MARK_WARN
@@ -1386,13 +1389,13 @@ class maint:
         # Check some postgresql config parms
         ####################################
         sql = "with summary as (select name, setting from pg_settings where name in ('autovacuum', 'checkpoint_completion_target', 'data_checksums', 'idle_in_transaction_session_timeout', 'log_checkpoints', 'log_lock_waits',  'log_min_duration_statement', 'log_temp_files', 'shared_preload_libraries', 'track_activity_query_size') order by 1 ) select setting from summary order by name"
-        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
+        cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
             errors = "[ERROR] Unable to get configuration parameters."
             aline = "%s" % (errors)
             self.writeout(aline)
-            return rc, errors        
+            return rc, errors
         # since we have multiple rows, we split based on carriage return, not pipe when one row is returned
         cols = results.split('\n')
 
@@ -1408,16 +1411,16 @@ class maint:
         track_activity_query_size           = int(cols[9].strip())
 
         #print ("autovac=%s  chk_target=%s  sums=%s  idle=%s  log_checkpoints=%s  log_locks= %s  log_min=%s  log_temp=%s  shared=%s  track=%s" \
-        #      % (autovacuum, checkpoint_completion_target, data_checksums, idle_in_transaction_session_timeout, log_checkpoints, log_lock_waits, 
+        #      % (autovacuum, checkpoint_completion_target, data_checksums, idle_in_transaction_session_timeout, log_checkpoints, log_lock_waits,
         #      log_min_duration_statement, log_temp_files, shared_preload_libraries, track_activity_query_size))
 
-        msg = ''              
+        msg = ''
         if autovacuum != 'on':
             marker = MARK_WARN
             msg = "autovacuum is off.  "
         if checkpoint_completion_target <= 0.6:
             marker = MARK_WARN
-            msg+= "checkpoint_completion_target is less than optimal.  "            
+            msg+= "checkpoint_completion_target is less than optimal.  "
         if data_checksums != 'on':
             marker = MARK_WARN
             msg+= "data checksums is off.  "
@@ -1429,29 +1432,29 @@ class maint:
             msg+= "log_checkpoints is off.  "
         if log_lock_waits != 'on':
             marker = MARK_WARN
-            msg+= "log_lock_waits is off.  "            
+            msg+= "log_lock_waits is off.  "
         if log_min_duration_statement == '-1':
             marker = MARK_WARN
             msg+= "log_min_duration_statement is off.  "
         if log_temp_files == '-1':
             marker = MARK_WARN
-            msg+= "log_temp_files is off.  "             
+            msg+= "log_temp_files is off.  "
         if 'pg_stat_statements' not in shared_preload_libraries:
             marker = MARK_WARN
             msg+= "pg_stat_statements extension is not loaded.  "
         if track_activity_query_size < 8192:
             marker = MARK_WARN
-            msg+= "track_activity_query_size may need to be increased or log queries may be truncated.  " 
+            msg+= "track_activity_query_size may need to be increased or log queries may be truncated.  "
 
         if msg != '':
-            marker = MARK_WARN        
+            marker = MARK_WARN
         else:
             marker = MARK_OK
             msg = "No configuration problems detected."
 
         print (marker+msg)
 
-        
+
         ############################################################
         # Check checkpoints, background writers, and backend writers
         ############################################################
@@ -1463,14 +1466,14 @@ class maint:
             errors = "[ERROR] Unable to get background/backend buffers count."
             aline = "%s" % (errors)
             self.writeout(aline)
-            return rc, errors        
+            return rc, errors
 
         if int(results) == 0:
             marker = MARK_WARN
             msg = "No buffers to check for checkpoint, background, or backend writers."
             html = "<tr><td width=\"5%\"><font color=\"red\">&#10004;</font></td><td width=\"20%\"><font color=\"red\">Checkpoint/Background/Backend Writers</font></td><td width=\"75%\"><font color=\"red\">" + msg + "</font></td></tr>"
             print (marker+msg)
-        else:            
+        else:
             sql = "select checkpoints_timed, checkpoints_req, buffers_checkpoint, buffers_clean, maxwritten_clean, buffers_backend, buffers_backend_fsync, buffers_alloc, checkpoint_write_time / 1000 as checkpoint_write_time, checkpoint_sync_time / 1000 as checkpoint_sync_time, (100 * checkpoints_req) / (checkpoints_timed + checkpoints_req) AS checkpoints_req_pct,    pg_size_pretty(buffers_checkpoint * block_size / (checkpoints_timed + checkpoints_req)) AS avg_checkpoint_write,  pg_size_pretty(block_size * (buffers_checkpoint + buffers_clean + buffers_backend)) AS total_written,  100 * buffers_checkpoint / (buffers_checkpoint + buffers_clean + buffers_backend) AS checkpoint_write_pct,    100 * buffers_clean / (buffers_checkpoint + buffers_clean + buffers_backend) AS background_write_pct, 100 * buffers_backend / (buffers_checkpoint + buffers_clean + buffers_backend) AS backend_write_pct from pg_stat_bgwriter, (SELECT cast(current_setting('block_size') AS integer) AS block_size) bs"
 
             cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
@@ -1520,14 +1523,14 @@ class maint:
                 msg += "background writer stopped cleaning scan %d times because it had written too many buffers.  Consider increasing \"bgwriter_lru_maxpages\".  " % maxwritten_clean
             if checkpoints_req > checkpoints_timed:
                 marker = MARK_WARN
-                msg += "\"checkpoints requested\" contributing to a lot more checkpoints (%d) than \"checkpoint timeout\" (%d).  Consider increasing \"checkpoint_segments or max_wal_size\".  " % (checkpoints_req, checkpoints_timed)            
+                msg += "\"checkpoints requested\" contributing to a lot more checkpoints (%d) than \"checkpoint timeout\" (%d).  Consider increasing \"checkpoint_segments or max_wal_size\".  " % (checkpoints_req, checkpoints_timed)
             if buffers_backend_fsync > 0:
                 marker = MARK_WARN
-                msg += "storage problem since fsync queue is completely filled. buffers_backend_fsync = %d." % (buffers_backend_fsync)            
+                msg += "storage problem since fsync queue is completely filled. buffers_backend_fsync = %d." % (buffers_backend_fsync)
             if buffers_clean > buffers_backend:
                 marker = MARK_WARN
-                msg += "backends doing most of the cleaning. Consider increasing bgwriter_lru_multiplier and decreasing bgwriter_delay.  It could also be a problem with shared_buffers not being big enough."                        
-           
+                msg += "backends doing most of the cleaning. Consider increasing bgwriter_lru_multiplier and decreasing bgwriter_delay.  It could also be a problem with shared_buffers not being big enough."
+
             if marker == MARK_OK:
                 msg = "No problems detected with checkpoint, background, or backend writers."
 
@@ -1619,7 +1622,7 @@ class maint:
             msg = "%d unused indexes were found." % int(results)
 
         print (marker+msg)
-        
+
         ###################################
         # Check for short-lived connections
         ###################################
@@ -1643,7 +1646,7 @@ class maint:
         elif avgsecs < 200:
             marker = MARK_WARN
             msg = "Connections average less than 2 minutes (%d).  Use or tune a connection pooler to keep these connections alive longer." % (avgsecs / 60)
-        print (marker+msg)        
+        print (marker+msg)
 
 
         ####################################
@@ -1718,27 +1721,27 @@ class maint:
                       if rc != 0:
                           print("mail error")
                           return 1
-              else:    
+              else:
                   marker = MARK_OK
-                  msg = "Data Directory Usage is acceptable: %d%% used" % pctused                
+                  msg = "Data Directory Usage is acceptable: %d%% used" % pctused
         else:
           marker = MARK_OK
           msg = "N/A  PG Host is remote. No server file usage is available."
         print (marker+msg)
-        
+
         #######################################################
         ### Check for streaming mode replication associated lag
         #######################################################
         if self.checkreplication:
             sql = "SELECT floor(EXTRACT(EPOCH FROM replay_lag)) from pg_stat_replication"
-            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)        
+            cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
             rc, results = self.executecmd(cmd, False)
             if rc != SUCCESS:
                 errors = "[ERROR] Unable to get replication info."
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
-        
+
             if results == "":
                 # no active replication detected
                 marker = MARK_WARN
@@ -1755,27 +1758,33 @@ class maint:
                 msg = "Active replication with slight lag: %s seconds."
             else:
                 marker = MARK_WARN
-                msg = "Active replication with noticeable lag: %s seconds."            
+                msg = "Active replication with noticeable lag: %s seconds."
                 subject = "Active replication with noticeable lag: %s seconds."
                 if self.alert(REPLICATION):
                     rc = self.send_alert(self.to, self.from_, subject, '')
-            print (marker+msg)        
+            print (marker+msg)
 
         #############################################
         ### Check for PG Warnings/Errors from its log
         #############################################
         if self.local:
-            pass    
-            # cat current_logfiles | awk '{print($2)}' --> log/postgresql-Thu.log
+            pass
+            #SELECT current_setting('data_directory') AS pgdata_path;
+            # --> /var/lib/pgsql/12/data
+            # NOTE: relative path to data dir if does not start with forward slash
             #select * from  pg_current_logfile();   --> log/postgresql-Thu.log
+            #select * from  pg_current_logfile();   --> /mnt/logs/postgresql-2023-12-26_08.log
+            if self.logdir[0] != '/':
+                self.logdir = self.datadir + '/' + self.logdir
+            #print ("datadir=%s  logdir=%s" % (self.datadir, self.logdir))
 
-        
+
 
 
         #######################################
         ### Check for PGBouncer Warnings/Errors
         #######################################
-        if self.checkpgbouncer:        
+        if self.checkpgbouncer:
             # see if pgbouncer is running
             #ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v '\-\-color=auto' |  awk '{ print $2 }'
             cmd = "ps -ef | grep pgbouncer | grep 'pgbouncer.ini' | grep -v 'grep' |  awk '{ print $2 }'"
@@ -1785,7 +1794,7 @@ class maint:
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
-            pid = results.strip()       
+            pid = results.strip()
             if pid.isnumeric():
                 marker = MARK_OK
                 msg = 'PGBouncer is running.'
@@ -1795,8 +1804,8 @@ class maint:
                 msg = "PGBouncer is not running"
                 if self.alert(PGBOUNCER1):
                     rc = self.send_alert(self.to, self.from_, subject, msg)
-            print (marker+msg)                      
-       
+            print (marker+msg)
+
             # requires execute, read permissions on the pgbouncer log file
             #2023-12-17 03:21:46.320 EST [16494] WARNING C-0x124c458: table_management/pgappuser@unix(16494):6432 pooler error: client_login_timeout (server down)
             #2023-12-19 06:56:08.976 EST [14799] WARNING C-0x180d3e0: (nodb)/(nouser)@10.2.220.218:42172 unsupported startup parameter: replication=true
@@ -1808,42 +1817,42 @@ class maint:
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
-        
+
             #print("pgbouncer results: %s" % results)
             ##### uncomment the following and change date to current time + 1 minute to test the warning
             #####results = "2023-12-20 17:55:01.449 EST [3471] WARNING C-0x12a3230: (nodb)/dynatracereadonly@127.0.0.1:49738 pooler error: no such database: eventstore"
             parsed = results.split('EST')
             adatetimestr = parsed[0].strip()
             # chop off the microseconds
-            adatetimestr = adatetimestr[:-4]       
-        
+            adatetimestr = adatetimestr[:-4]
+
             # fake a warning
             #adatetimestr="2023-12-19 08:30:00"
-            #print("adatetimestr=%s" % adatetimestr)        
-            adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")        
+            #print("adatetimestr=%s" % adatetimestr)
+            adatetimeobj = datetime.strptime(adatetimestr, "%Y-%m-%d %H:%M:%S")
             msg = parsed[1].strip()
             # check for  password authentication failed messages and ignore
             if 'password authentication failed' in msg:
                 # we ignore these bad password warnings
                 marker = MARK_OK
                 msg = 'No PGBouncer Warnings Found.'
-                print (marker+msg)              
+                print (marker+msg)
             else:
                 dt1 = datetime.now()
-                diff = dt1 - adatetimeobj 
-                secs = diff.seconds 
+                diff = dt1 - adatetimeobj
+                secs = diff.seconds
                 # Assuming this program runs every minute, alert if a warning happened in the last 2 minutes
                 #print("pgbouncer results: %s" % results)
                 #print ("secs=%d" % (secs))
                 if secs < 120:
                     marker = MARK_WARN
                     subject = "PGBouncer Warning"
-                    #if self.alert(PGBOUNCER2):                  
+                    #if self.alert(PGBOUNCER2):
                     rc = self.send_alert(self.to, self.from_, subject, results)
                 else:
                     marker = MARK_OK
                     msg = 'No PGBouncer Warnings Found.'
-                print (marker+msg) 
+                print (marker+msg)
 
             # now start checking PGBouncer show commands assuming they are available through PG as external views
             cmd = "psql -At -h localhost -d dxpcore -U pgbouncer -p 6432 -c \"select count(*) from pgbouncer.pools where database <> 'pgbouncer' and cl_waiting > 0\""
@@ -1853,7 +1862,7 @@ class maint:
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
-        
+
             waits = int(results)
             if waits > 0:
                 marker = MARK_WARN
@@ -1864,8 +1873,8 @@ class maint:
             else:
                 marker = MARK_OK
                 msg = 'No PGBouncer clients waiting for PG connections.'
-            print (marker+msg)        
-        
+            print (marker+msg)
+
             #Show free clients and servers that are close to zero.
             #select count(*) free_clients from pgbouncer.lists where list = 'free_clients' and items < 5;
             #select count(*) free_servers from pgbouncer.lists where list = 'free_servers' and items < 5;
@@ -1880,7 +1889,7 @@ class maint:
             # check repo's last line in the log file.  /var/log/pgbackrest/certship-backup.log
             # It should be something like this:
             #2023-12-19 02:00:22.027 P00   INFO: backup command end: completed successfully (20837ms)
-        
+
             # also check output from pgbackrest info command to see date of last backup to see if was yesterday or today
             #pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }' --> 2023-12-19
             cmd = "pgbackrest info | grep 'timestamp start/stop' | tail -1 | awk '{ print $3 }'"
@@ -1890,7 +1899,7 @@ class maint:
                 aline = "%s" % (errors)
                 self.writeout(aline)
                 return rc, errors
-        
+
             #print("pgbackrest results = %s" % results)
             # consider old if older than 2 days
             if datetime.strptime(results, "%Y-%m-%d") + timedelta(days=2) < datetime.today():
@@ -1900,18 +1909,18 @@ class maint:
 
                 # get additional details
                 #ssh Q-LAB-PG-BACKUP "tail -n 7 /var/log/pgbackrest/certship-backup.log"
-                #ssh Q-LAB-PG-BACKUP "grep -A7 'PROCESS START' /var/log/pgbackrest/certship-backup.log | tail -7"                    
+                #ssh Q-LAB-PG-BACKUP "grep -A7 'PROCESS START' /var/log/pgbackrest/certship-backup.log | tail -7"
                 cmd = "ssh Q-LAB-PG-BACKUP \"grep -A7 'PROCESS START' /var/log/pgbackrest/certship-backup.log | tail -7\""
-                rc, results = self.executecmd(cmd, True)                    
+                rc, results = self.executecmd(cmd, True)
                 if rc == SUCCESS:
                     msg = msg + "\n" + results
                 if self.alert(PGBACKREST1):
-                    rc = self.send_alert(self.to, self.from_, subject, msg)        
+                    rc = self.send_alert(self.to, self.from_, subject, msg)
             else:
                 marker = MARK_OK
                 msg = 'Latest PGBackrest date is less than 2 days old: %s' % results
-            print (marker+msg)        
-        
+            print (marker+msg)
+
 
         return SUCCESS, ""
 
@@ -1919,7 +1928,7 @@ class maint:
     ###########################################################
     def delay(self, freeze):
         return SUCCESS, ""
-       
+
 
 ##### END OF CLASS DEFINITION
 
@@ -1937,17 +1946,17 @@ def setupOptionParser():
     parser.add_option("-c", "--cpus",           dest="cpus", type=int, help="cpus available",                   default=-999,metavar="CPUS")
     parser.add_option("-i", "--idleintransmins",dest="idleintransmins", type=int, help="idle in trans mins",    default=-999,metavar="IDLEINTRANSMINS")
     parser.add_option("-o", "--idleconnmins",   dest="idleconnmins", type=int, help="idle connections mins",    default=-999,metavar="IDLECONNMINS")
-    parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")    
+    parser.add_option("-e", "--environment",    dest="environment", help="environment identifier",              default="",metavar="ENVIRONMENT")
     parser.add_option("-t", "--testmode",       dest="testmode", help="testing email addr",                     default=False, action="store_true")
     parser.add_option("-v", "--verbose",        dest="verbose", help="Verbose Output",                          default=False, action="store_true")
     parser.add_option("-b", "--debug",          dest="debug", help="Debug Output",                              default=False, action="store_true")
     parser.add_option("-s", "--slacknotify",    dest="slacknotify", help="Slack Notifications",                 default=False, action="store_true")
     parser.add_option("-m", "--mailnotify",     dest="mailnotify", help="Mail Notifications",                   default=False, action="store_true")
-    
+
     parser.add_option("-r", "--checkreplication", dest="checkreplication", help="Check Replication",            default=False, action="store_true")
     parser.add_option("-x", "--checkpgbouncer",   dest="checkpgbouncer",   help="Check PGBouncer",              default=False, action="store_true")
     parser.add_option("-y", "--checkpgbackrest",  dest="checkpgbackrest",  help="Check PGBackrest",             default=False, action="store_true")
-    
+
 
     return parser
 
