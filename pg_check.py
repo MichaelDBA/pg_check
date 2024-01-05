@@ -45,31 +45,22 @@
 # -t [testing mode with testing email]
 # -v [verbose output flag, mostly used for debugging]
 #
-# Examples: run report on entire test database and output in web format
-# ./pg_check.py -h localhost -p 5413 -U postgres -n concept -d dvdrental -w 10 -l 60 -i 30 -c 4 -o 2440 -e PROD -v
-#
 # Requirements:
 #  1. python 3
 #  2. psql client
+#  3. sendmail service running on host (alternative: postfix). Check /var/log/maillog
 #
 # Assumptions:
 # 1. db user defaults to postgres if not provided as parameter.
 # 2. Password must be in local .pgpass file or client authentication changed to trust or peer
 # 3. psql must be in the user's path
 # 4. Make sure timing and pager are turned off (see .psqlrc)
+# 5. slack webhook must be in specified file, ~/.slackhook
 #
 # Cron Job Info:
 #    View cron job output: view /var/log/cron
-#    source the database environment: source ~/db_catalog.ksh
-#    Example cron job that does smart vacuum freeze commands for entire database every Saturday at 4am:
-#    */10 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb -w 10 -c 48 -e PROD  >> /home/centos/logs/pg_check_$(date +\%Y\%m\%d).log 2>&1
-#    */10 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb -w 10 -c 48 -e PROD
-#    */30 * * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb  -l 45 -i 30 -e PROD
-#    0    7 * * * ${TOOLDIR}/pg_check.py -h concept-v2-db-cluster-prod.cluster-clobpzafvq4q.us-east-1.rds.amazonaws.com -p 5432 -U sysdba -d conceptdb  -o 2880 -e PROD
-#
-# NOTE: You may have to source the environment variables file in the crontab to get this program to work.
-#          #!/bin/bash
-#          source /home/user/.bash_profile
+#    Example cron job that does checks against the cluster and nothing else (pgbackrest, pgbounceer) and logs warnings to email and slack
+#    * * * * * /var/lib/pgsql/pg_check/pg_check.py -h localhsot -p 5416 -U postgres -d clone_testing -o 2440 -w 10 -l 60 -i 30 -e CLONE_TESTING -g  -m -s 
 #
 # TODOs:
 #
@@ -86,6 +77,7 @@
 # Michael Vitale     12/17/2023     Enhancement: Control how often alerts are done based on history alert file.
 # Michael Vitale     12/21/2023     Enhancement: Add PGBouncer and PGBackrest checks
 # Michael Vitale     12/26/2023     Enhancement: Add warnings from current PG log file (local only)
+# Michael Vitale     01/05/2024     Enhancement: Use calculated formula for size to determe vacuum freeze candidates since the pg_table_size() func can cause wait/lock conditions
 ################################################################################################################
 import string, sys, os, time
 #import datetime
@@ -112,10 +104,10 @@ NOTICE    = 2
 TOOLONG   = 3
 HIGHLOAD  = 4
 DESCRIPTION="This python utility program issues email/slack alerts for waits, locks, idle in trans, long queries."
-VERSION    = 1.3
+VERSION    = 1.4
 PROGNAME   = "pg_check"
-ADATE      = "Dec 26, 2023"
-PROGDATE   = "2023-12-26"
+ADATE      = "Jan 5, 2024"
+PROGDATE   = "2024-01-05"
 MARK_OK    = "[ OK ]  "
 MARK_WARN  = "[WARN]  "
 
@@ -179,8 +171,8 @@ class maint:
             self.slackhook = f.readline().strip('\n')
         #print ('slackhook=%s' % self.slackhook)
 
-        self.to                = 'michael.vitale@capgemini.com'
-        #self.to                = 'michaeldba@sqlexec.com michael@vitalehouse.com'
+        self.to                = 'michaeldba@sqlexec.com'
+        #self.to                = 'michaeldba@sqlexec.com xxxx@whatever.com'
         self.from_             = 'pgdude@noreply.com'
 
         self.fout              = ''
@@ -319,13 +311,11 @@ class maint:
             self.idleconnmins = idleconnmins
 
         if self.testmode:
-            #self.to  = 'michaeldba@sqlexec.com '
-            self.to  = 'michael.vitale@capgemini.com'
+            self.to  = 'michaeldba@sqlexec.com '
             #print("testing mode")
         else:
-            #self.to  = 'michaeldba@sqlexec.com michael@vitalehouse.com'
-            self.to  = 'michael.vitale@capgemini.com'
-
+            #self.to  = 'michaeldba@sqlexec.com xxxxx@whatever.com'
+            self.to  = 'michaeldba@sqlexec.com'
 
         # process the schema or table elements
         total   = len(argv)
@@ -1652,7 +1642,10 @@ class maint:
         ####################################
         # Check for vacuum freeze candidates
         ####################################
-        sql="WITH settings AS (select s.setting from pg_settings s where s.name = 'autovacuum_freeze_max_age') select count(c.*) from settings s, pg_class c, pg_namespace n WHERE n.oid = c.relnamespace and c.relkind = 'r' and pg_table_size(c.oid) > 1073741824 and round((age(c.relfrozenxid)::float / s.setting::float) * 100) > 50"
+        # WITH settings AS (select s.setting from pg_settings s where s.name = 'autovacuum_freeze_max_age') select count(c.*) from settings s, pg_class c, pg_namespace n WHERE n.oid = c.relnamespace and c.relkind = 'r' and pg_table_size(c.oid) > 1073741824 and round((age(c.relfrozenxid)::float / s.setting::float) * 100) > 50;
+        #  WITH settings AS (select s.setting from pg_settings s where s.name = 'autovacuum_freeze_max_age') select c.relname, pg_table_size(c.oid) as size, c.relpages * 8192 as size_calculated,c.relpages, c.reltuples, s.setting as autovacuum_freeze_max_age from settings s, pg_class c, pg_namespace n WHERE n.oid = c.relnamespace and c.relkind = 'r'  and n.nspname not like 'pg_%' order by 2 desc limit 20;
+        sql="WITH settings AS (select s.setting from pg_settings s where s.name = 'autovacuum_freeze_max_age') select count(c.*) from settings s, pg_class c, pg_namespace n " \
+            "WHERE n.oid = c.relnamespace and c.relkind = 'r' and (c.relpages::bigint * 8192)::bigint > 1073741824 and round((age(c.relfrozenxid)::float / s.setting::float) * 100) > 50"
         cmd = "psql %s -At -X -c \"%s\"" % (self.connstring, sql)
         rc, results = self.executecmd(cmd, False)
         if rc != SUCCESS:
